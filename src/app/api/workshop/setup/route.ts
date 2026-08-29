@@ -2,13 +2,17 @@ import { NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /**
- * Auto-setup endpoint.
- * Creates the workshop_app_snapshots table in Supabase if it doesn't exist.
- * This eliminates the need for users to manually run SQL migrations.
+ * Auto-setup: creates exec_sql function + workshop_app_snapshots table.
  */
 
-const CREATE_TABLE_SQL = `
--- Create workshop_app_snapshots table if it doesn't exist
+const SETUP_SQL = `
+CREATE OR REPLACE FUNCTION exec_sql(sql TEXT)
+RETURNS void AS $$
+BEGIN
+  EXECUTE sql;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 CREATE TABLE IF NOT EXISTS workshop_app_snapshots (
   id         TEXT PRIMARY KEY DEFAULT 'singleton',
   company_id TEXT NOT NULL DEFAULT 'default',
@@ -17,69 +21,58 @@ CREATE TABLE IF NOT EXISTS workshop_app_snapshots (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Insert singleton row if it doesn't exist
 INSERT INTO workshop_app_snapshots (id, company_id, state, updated_at)
 VALUES ('singleton', 'default', '{}', now())
 ON CONFLICT (id) DO NOTHING;
 
--- Enable RLS
 ALTER TABLE workshop_app_snapshots ENABLE ROW LEVEL SECURITY;
 
--- Create permissive policy (service_role bypasses RLS anyway)
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies WHERE policyname = 'Allow all for service role'
-    AND tablename = 'workshop_app_snapshots'
-  ) THEN
-    CREATE POLICY "Allow all for service role" ON workshop_app_snapshots
-      FOR ALL USING (true) WITH CHECK (true);
-  END IF;
-END $$;
+DROP POLICY IF EXISTS "tf_full_access" ON workshop_app_snapshots;
+CREATE POLICY "tf_full_access" ON workshop_app_snapshots
+  FOR ALL USING (true) WITH CHECK (true);
 `;
 
 export async function POST() {
   const supabase = createSupabaseAdminClient();
   if (!supabase) {
-    return NextResponse.json(
-      { ok: false, error: "supabase_not_configured", message: "SUPABASE_SERVICE_ROLE_KEY não configurada." },
-      { status: 503 },
-    );
+    return NextResponse.json({ ok: false, error: "no_supabase", message: "SUPABASE_SERVICE_ROLE_KEY não configurada." });
   }
 
   try {
-    // Execute the SQL to create the table
-    const { error } = await supabase.rpc("exec_sql", { sql: CREATE_TABLE_SQL });
+    // Try exec_sql RPC
+    const { error } = await supabase.rpc("exec_sql", { sql: SETUP_SQL });
 
     if (error) {
-      // If exec_sql doesn't exist, try using the REST API to run raw SQL
-      // This is a fallback — the user may need to run the SQL manually
-      console.warn("[setup] exec_sql RPC not available, trying direct query:", error.message);
-
-      // Try to query the table directly to see if it exists
-      const { error: queryError } = await supabase
-        .from("workshop_app_snapshots")
-        .select("id")
-        .eq("id", "singleton")
-        .maybeSingle();
-
-      if (queryError && (queryError.code === "42P01" || queryError.message?.includes("does not exist"))) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: "table_missing",
-            message: "Tabela não existe. Execute o SQL manualmente no dashboard do Supabase.",
-            sql: CREATE_TABLE_SQL,
-          },
-          { status: 200 },
-        );
+      // exec_sql doesn't exist yet — create it via raw HTTP
+      const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (!url || !key) {
+        return NextResponse.json({ ok: false, error: "no_url", message: "NEXT_PUBLIC_SUPABASE_URL não configurada." });
       }
 
-      // Table exists but we couldn't verify via exec_sql
-      return NextResponse.json({ ok: true, message: "Tabela já existe.", verified: true });
+      const response = await fetch(`${url}/rest/v1/rpc/exec_sql`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: key,
+          Authorization: `Bearer ${key}`,
+        },
+        body: JSON.stringify({ sql: SETUP_SQL }),
+      });
+
+      if (!response.ok) {
+        const body = await response.text();
+        console.warn("[setup] Raw SQL exec failed:", response.status, body.slice(0, 200));
+        return NextResponse.json({
+          ok: false,
+          error: "sql_failed",
+          message: `SQL execution failed: ${response.status}`,
+          detail: body.slice(0, 300),
+        });
+      }
     }
 
-    // Verify the table was created
+    // Verify
     const { data, error: verifyError } = await supabase
       .from("workshop_app_snapshots")
       .select("id")
@@ -87,32 +80,19 @@ export async function POST() {
       .maybeSingle();
 
     if (verifyError) {
-      return NextResponse.json(
-        { ok: false, error: "verify_failed", message: "Tabela criada mas não acessível." },
-        { status: 500 },
-      );
+      return NextResponse.json({ ok: false, error: "verify_failed", message: verifyError.message });
     }
 
-    return NextResponse.json({
-      ok: true,
-      message: "Tabela criada e verificada com sucesso!",
-      tableExists: true,
-      singletonRow: !!data,
-    });
+    return NextResponse.json({ ok: true, message: "Setup completo!", tableExists: true, singletonRow: !!data });
   } catch (err) {
-    console.error("[setup] Unexpected error:", err);
-    return NextResponse.json(
-      { ok: false, error: "unexpected_error", message: "Erro inesperado durante configuração." },
-      { status: 500 },
-    );
+    console.error("[setup] Exception:", err);
+    return NextResponse.json({ ok: false, error: "exception", message: String(err) });
   }
 }
 
 export async function GET() {
   const supabase = createSupabaseAdminClient();
-  if (!supabase) {
-    return NextResponse.json({ configured: false, tableExists: false });
-  }
+  if (!supabase) return NextResponse.json({ configured: false });
 
   try {
     const { data, error } = await supabase
@@ -121,15 +101,9 @@ export async function GET() {
       .eq("id", "singleton")
       .maybeSingle();
 
-    if (error && (error.code === "42P01" || error.message?.includes("does not exist"))) {
-      return NextResponse.json({ configured: true, tableExists: false });
-    }
+    if (error) return NextResponse.json({ configured: true, tableExists: false, error: error.message });
 
-    return NextResponse.json({
-      configured: true,
-      tableExists: true,
-      lastSync: data?.updated_at ?? null,
-    });
+    return NextResponse.json({ configured: true, tableExists: true, lastSync: data?.updated_at ?? null });
   } catch {
     return NextResponse.json({ configured: true, tableExists: false });
   }

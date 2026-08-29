@@ -4,18 +4,99 @@ import { createSupabaseAdminClient } from "@/lib/supabase/server";
 /**
  * Total Flex — Bulletproof State Sync
  *
- * GET  → reads the full state from Supabase
- * PUT  → writes the full state to Supabase
- *
- * If the table doesn't exist, it auto-creates it.
- * Uses the service_role key — no client auth needed.
+ * Uses multiple strategies to ensure data gets saved:
+ * 1. Try Supabase client upsert
+ * 2. If that fails (RLS, etc), use raw SQL via PostgREST
+ * 3. If that fails, return detailed error
  */
 
 const TABLE = "workshop_app_snapshots";
 const ROW_ID = "singleton";
 const DEFAULT_COMPANY = "default";
 
-const CREATE_TABLE_SQL = `
+async function rawSqlExec(sql: string): Promise<{ ok: boolean; error?: string }> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return { ok: false, error: "no_credentials" };
+
+  try {
+    const response = await fetch(`${url}/rest/v1/rpc/exec_sql`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({ sql }),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      return { ok: false, error: `HTTP ${response.status}: ${body.slice(0, 200)}` };
+    }
+
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+async function rawSqlQuery(sql: string): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return { ok: false, error: "no_credentials" };
+
+  try {
+    // Use PostgREST to run raw SQL via the RPC endpoint
+    const response = await fetch(`${url}/rest/v1/rpc/exec_sql_query`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({ query: sql }),
+    });
+
+    if (!response.ok) {
+      // exec_sql_query might not exist — try alternative approach
+      return { ok: false, error: `HTTP ${response.status}` };
+    }
+
+    const data = await response.json();
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+async function ensureTableAndAccess(): Promise<{ ok: boolean; error?: string }> {
+  const supabase = createSupabaseAdminClient();
+  if (!supabase) return { ok: false, error: "no_supabase_client" };
+
+  // Step 1: Try to read from the table (tests both existence and access)
+  const { error: readError } = await supabase
+    .from(TABLE)
+    .select("id")
+    .eq("id", ROW_ID)
+    .maybeSingle();
+
+  if (!readError) {
+    // Table exists and is accessible — we're good
+    return { ok: true };
+  }
+
+  console.log("[sync] Table not accessible:", readError.message, readError.code);
+
+  // Step 2: exec_sql might not exist — try to create it via raw SQL
+  const setupSql = `
+CREATE OR REPLACE FUNCTION exec_sql(sql TEXT)
+RETURNS void AS $$
+BEGIN
+  EXECUTE sql;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 CREATE TABLE IF NOT EXISTS workshop_app_snapshots (
   id         TEXT PRIMARY KEY DEFAULT 'singleton',
   company_id TEXT NOT NULL DEFAULT 'default',
@@ -23,111 +104,59 @@ CREATE TABLE IF NOT EXISTS workshop_app_snapshots (
   updated_by TEXT,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
 INSERT INTO workshop_app_snapshots (id, company_id, state, updated_at)
 VALUES ('singleton', 'default', '{}', now())
 ON CONFLICT (id) DO NOTHING;
+
 ALTER TABLE workshop_app_snapshots ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies WHERE policyname = 'tf_full_access' AND tablename = 'workshop_app_snapshots'
-  ) THEN
-    CREATE POLICY "tf_full_access" ON workshop_app_snapshots FOR ALL USING (true) WITH CHECK (true);
-  END IF;
-END $$;
+
+DROP POLICY IF EXISTS "tf_full_access" ON workshop_app_snapshots;
+CREATE POLICY "tf_full_access" ON workshop_app_snapshots
+  FOR ALL USING (true) WITH CHECK (true);
 `;
 
-async function ensureTable(supabase: ReturnType<typeof createSupabaseAdminClient> & object): Promise<boolean> {
-  // First, try to read from the table
-  const { error: readError } = await supabase
+  const result = await rawSqlExec(setupSql);
+  if (!result.ok) {
+    console.error("[sync] Raw SQL exec failed:", result.error);
+    return { ok: false, error: `SQL exec failed: ${result.error}` };
+  }
+
+  // Step 3: Verify access after setup
+  const { error: verifyError } = await supabase
     .from(TABLE)
     .select("id")
     .eq("id", ROW_ID)
     .maybeSingle();
 
-  if (!readError) return true; // Table exists and is readable
-
-  // Table doesn't exist or isn't accessible — try to create it
-  console.log("[sync] Table not found, attempting auto-create...");
-
-  try {
-    // Use Supabase PostgREST to execute raw SQL via the rpc endpoint
-    // We try the exec_sql RPC first, then fall back to direct table creation
-    const { error: rpcError } = await supabase.rpc("exec_sql", { sql: CREATE_TABLE_SQL });
-
-    if (rpcError) {
-      console.warn("[sync] exec_sql RPC failed:", rpcError.message);
-      // RPC doesn't exist — try alternative: use the REST API directly
-      const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-      const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-      if (!url || !key) return false;
-
-      const response = await fetch(`${url}/rest/v1/rpc/exec_sql`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: key,
-          Authorization: `Bearer ${key}`,
-        },
-        body: JSON.stringify({ sql: CREATE_TABLE_SQL }),
-      });
-
-      if (!response.ok) {
-        console.warn("[sync] Direct SQL execution failed:", response.status);
-        return false;
-      }
-    }
-
-    // Verify table was created
-    const { error: verifyError } = await supabase
-      .from(TABLE)
-      .select("id")
-      .eq("id", ROW_ID)
-      .maybeSingle();
-
-    if (verifyError) {
-      console.error("[sync] Table creation verification failed:", verifyError.message);
-      return false;
-    }
-
-    console.log("[sync] Table created successfully!");
-    return true;
-  } catch (err) {
-    console.error("[sync] Auto-create failed:", err);
-    return false;
+  if (verifyError) {
+    return { ok: false, error: `Setup succeeded but table still inaccessible: ${verifyError.message}` };
   }
+
+  console.log("[sync] Table setup complete and verified!");
+  return { ok: true };
 }
 
 export async function GET() {
-  const supabase = createSupabaseAdminClient();
-  if (!supabase) {
-    return NextResponse.json({
-      state: null,
-      updatedAt: null,
-      source: "no_supabase",
-      detail: "SUPABASE_SERVICE_ROLE_KEY não configurada no Vercel.",
-    });
-  }
-
   try {
-    const tableReady = await ensureTable(supabase);
-    if (!tableReady) {
-      return NextResponse.json({
-        state: null,
-        updatedAt: null,
-        source: "setup_failed",
-        detail: "Não foi possível criar/accessar a tabela. Execute o SQLFINAL.sql manualmente no Supabase.",
-      });
+    const { ok, error } = await ensureTableAndAccess();
+    if (!ok) {
+      return NextResponse.json({ state: null, updatedAt: null, source: "setup_failed", detail: error });
     }
 
-    const { data, error } = await supabase
+    const supabase = createSupabaseAdminClient();
+    if (!supabase) {
+      return NextResponse.json({ state: null, updatedAt: null, source: "no_supabase" });
+    }
+
+    const { data, error: readError } = await supabase
       .from(TABLE)
       .select("state, updated_at")
       .eq("id", ROW_ID)
       .maybeSingle();
 
-    if (error) {
-      console.error("[sync:GET] Read error:", error.message);
-      return NextResponse.json({ state: null, updatedAt: null, source: "error", detail: error.message });
+    if (readError) {
+      return NextResponse.json({ state: null, updatedAt: null, source: "read_error", detail: readError.message });
     }
 
     const state = data?.state;
@@ -139,47 +168,32 @@ export async function GET() {
       source: "supabase",
     });
   } catch (err) {
-    console.error("[sync:GET] Exception:", err);
     return NextResponse.json({ state: null, updatedAt: null, source: "exception", detail: String(err) });
   }
 }
 
 export async function PUT(request: Request) {
-  const supabase = createSupabaseAdminClient();
-  if (!supabase) {
-    return NextResponse.json({
-      ok: false,
-      persisted: false,
-      reason: "no_supabase",
-      detail: "SUPABASE_SERVICE_ROLE_KEY não configurada.",
-    });
-  }
-
   try {
+    const supabase = createSupabaseAdminClient();
+    if (!supabase) {
+      return NextResponse.json({ ok: false, reason: "no_supabase", detail: "SUPABASE_SERVICE_ROLE_KEY não configurada." });
+    }
+
     const body = await request.json();
     const state = body?.state;
 
-    if (!state || typeof state !== "object") {
-      return NextResponse.json({ ok: false, error: "invalid_payload", detail: "State é obrigatório." }, { status: 400 });
+    if (!state || typeof state !== "object" || !state.updatedAt) {
+      return NextResponse.json({ ok: false, error: "invalid_state", detail: "State inválido." }, { status: 400 });
     }
 
-    if (!state.updatedAt) {
-      return NextResponse.json({ ok: false, error: "invalid_state", detail: "State.updatedAt é obrigatório." }, { status: 400 });
-    }
-
-    // Ensure table exists
-    const tableReady = await ensureTable(supabase);
+    // Ensure table exists and is accessible
+    const { ok: tableReady, error: tableError } = await ensureTableAndAccess();
     if (!tableReady) {
-      return NextResponse.json({
-        ok: false,
-        persisted: false,
-        reason: "setup_failed",
-        detail: "Não foi possível criar a tabela workshop_app_snapshots. Execute SQLFINAL.sql manualmente.",
-      });
+      return NextResponse.json({ ok: false, reason: "setup_failed", detail: tableError });
     }
 
-    // Upsert the full state
-    const { error } = await supabase
+    // Strategy 1: Try Supabase client upsert
+    const { error: upsertError } = await supabase
       .from(TABLE)
       .upsert(
         {
@@ -192,19 +206,36 @@ export async function PUT(request: Request) {
         { onConflict: "id" },
       );
 
-    if (error) {
-      console.error("[sync:PUT] Upsert error:", error.message, error.code);
-      return NextResponse.json({
-        ok: false,
-        error: "upsert_failed",
-        detail: error.message,
-        code: error.code,
-      }, { status: 500 });
+    if (!upsertError) {
+      return NextResponse.json({ ok: true, persisted: true, updatedAt: state.updatedAt, strategy: "client" });
     }
 
-    return NextResponse.json({ ok: true, persisted: true, updatedAt: state.updatedAt });
+    console.error("[sync] Client upsert failed:", upsertError.message);
+
+    // Strategy 2: Raw SQL upsert via exec_sql RPC
+    const stateJson = JSON.stringify(state).replace(/'/g, "''");
+    const sql = `
+INSERT INTO workshop_app_snapshots (id, company_id, state, updated_by, updated_at)
+VALUES ('singleton', '${state.company?.id ?? DEFAULT_COMPANY}', '${stateJson}'::jsonb, 'client', '${state.updatedAt}')
+ON CONFLICT (id) DO UPDATE SET
+  state = EXCLUDED.state,
+  updated_at = EXCLUDED.updated_at,
+  updated_by = EXCLUDED.updated_by;
+`;
+
+    const rawResult = await rawSqlExec(sql);
+    if (rawResult.ok) {
+      return NextResponse.json({ ok: true, persisted: true, updatedAt: state.updatedAt, strategy: "raw_sql" });
+    }
+
+    console.error("[sync] Raw SQL upsert also failed:", rawResult.error);
+    return NextResponse.json({
+      ok: false,
+      error: "all_strategies_failed",
+      detail: `Client: ${upsertError.message} | RawSQL: ${rawResult.error}`,
+    }, { status: 500 });
   } catch (err) {
-    console.error("[sync:PUT] Exception:", err);
+    console.error("[sync] Exception:", err);
     return NextResponse.json({ ok: false, error: "exception", detail: String(err) }, { status: 500 });
   }
 }
