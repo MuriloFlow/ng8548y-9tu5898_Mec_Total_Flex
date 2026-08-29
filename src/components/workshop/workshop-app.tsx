@@ -2858,8 +2858,9 @@ function HistoryView({ onOpenOrder, onOpenCustomer }: { onOpenOrder: (orderId: s
 }
 
 function SettingsView() {
-  const { state, currentUser, resetDemoData, syncStatus } = useWorkshop();
+  const { state, currentUser, resetDemoData, syncStatus, forceSync } = useWorkshop();
   const [notifPermission, setNotifPermission] = useState<PermissionState>("unsupported");
+  const [setupLoading, setSetupLoading] = useState(false);
 
   useEffect(() => {
     setNotifPermission(getNotificationPermission());
@@ -2872,6 +2873,27 @@ function SettingsView() {
       toast.success("Notificações ativadas!");
     } else if (result === "denied") {
       toast.error("Permissão negada. Ative manualmente nas configurações do navegador.");
+    }
+  }
+
+  async function handleSetup() {
+    setSetupLoading(true);
+    try {
+      const res = await fetch("/api/workshop/setup", { method: "POST" });
+      const body = await res.json();
+      if (body?.ok) {
+        toast.success("Tabela criada no Supabase!");
+        // Force sync after setup
+        await forceSync();
+      } else if (body?.sql) {
+        toast.error("Execute o SQL manualmente no Supabase.");
+      } else {
+        toast.error(body?.message || "Erro na configuração.");
+      }
+    } catch {
+      toast.error("Erro ao configurar Supabase.");
+    } finally {
+      setSetupLoading(false);
     }
   }
 
@@ -2914,20 +2936,49 @@ function SettingsView() {
         <p className="mt-2 text-sm text-zinc-500">
           Dados são salvos automaticamente no Supabase a cada alteração.
         </p>
-        {syncStatus === "local_only" && (
-          <div className="mt-3 rounded-lg bg-amber-50 p-3">
-            <p className="text-sm font-semibold text-amber-700">
-              ⚠ Tabela não encontrada no Supabase.
-            </p>
-            <p className="mt-1 text-xs text-amber-600">
-              Rode o SQL migration no dashboard do Supabase para ativar a sincronização.
+        {supabaseConfigured && syncStatus === "synced" && (
+          <div className="mt-3 rounded-lg bg-emerald-50 p-3">
+            <p className="text-sm font-semibold text-emerald-700">
+              ✓ Todos os dados estão sincronizados com o banco de dados.
             </p>
           </div>
         )}
+        {supabaseConfigured && syncStatus === "local_only" && (
+          <div className="mt-3 space-y-3">
+            <div className="rounded-lg bg-amber-50 p-3">
+              <p className="text-sm font-semibold text-amber-700">
+                ⚠ Tabela não encontrada no Supabase.
+              </p>
+              <p className="mt-1 text-xs text-amber-600">
+                Clique em "Configurar automaticamente" ou rode o SQL manualmente.
+              </p>
+            </div>
+            <Button type="button" className="w-full" onClick={handleSetup} disabled={setupLoading}>
+              {setupLoading ? "Configurando..." : "Configurar automaticamente"}
+            </Button>
+          </div>
+        )}
         {syncStatus === "error" && (
-          <div className="mt-3 rounded-lg bg-rose-50 p-3">
-            <p className="text-sm font-semibold text-rose-700">
-              Erro ao sincronizar. Verifique as variáveis de ambiente.
+          <div className="mt-3 space-y-3">
+            <div className="rounded-lg bg-rose-50 p-3">
+              <p className="text-sm font-semibold text-rose-700">
+                Erro ao sincronizar. Verifique as variáveis de ambiente no Vercel.
+              </p>
+            </div>
+            <Button type="button" variant="outline" className="w-full" onClick={handleSetup} disabled={setupLoading}>
+              {setupLoading ? "Configurando..." : "Tentar configurar novamente"}
+            </Button>
+          </div>
+        )}
+        {supabaseConfigured && syncStatus !== "local_only" && (
+          <Button type="button" variant="outline" className="mt-3 w-full" onClick={forceSync} disabled={syncStatus === "syncing"}>
+            {syncStatus === "syncing" ? "Sincronizando..." : "Sincronizar agora"}
+          </Button>
+        )}
+        {!supabaseConfigured && (
+          <div className="mt-3 rounded-lg bg-zinc-50 p-3">
+            <p className="text-sm text-zinc-500">
+              Configure NEXT_PUBLIC_SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no Vercel para ativar a persistência remota.
             </p>
           </div>
         )}
