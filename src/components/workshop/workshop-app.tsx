@@ -2858,7 +2858,7 @@ function HistoryView({ onOpenOrder, onOpenCustomer }: { onOpenOrder: (orderId: s
 }
 
 function SettingsView() {
-  const { state, currentUser, resetDemoData } = useWorkshop();
+  const { state, currentUser, resetDemoData, syncStatus } = useWorkshop();
   const [notifPermission, setNotifPermission] = useState<PermissionState>("unsupported");
 
   useEffect(() => {
@@ -2879,6 +2879,21 @@ function SettingsView() {
   const supabaseConfigured = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
   const openReminders = state.reminders.filter((r) => r.status === "open" && r.dueDate);
 
+  const syncLabel = {
+    idle: "Aguardando",
+    syncing: "Sincronizando...",
+    synced: "Sincronizado ✓",
+    error: "Erro ao sincronizar",
+    local_only: "Somente local",
+  }[syncStatus];
+  const syncVariant = {
+    idle: "muted" as const,
+    syncing: "info" as const,
+    synced: "success" as const,
+    error: "danger" as const,
+    local_only: "warning" as const,
+  }[syncStatus];
+
   return (
     <div className="space-y-4">
       <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
@@ -2889,6 +2904,33 @@ function SettingsView() {
           <InfoRow label="Supabase" value={supabaseConfigured ? "Configurado" : "Aguardando .env"} />
           <InfoRow label="Fiscal" value={state.fiscalIntegration.status === "ready" ? "Pronto" : "Não configurado"} />
         </div>
+      </section>
+
+      <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-black">Sincronização</h2>
+          <Badge variant={syncVariant}>{syncLabel}</Badge>
+        </div>
+        <p className="mt-2 text-sm text-zinc-500">
+          Dados são salvos automaticamente no Supabase a cada alteração.
+        </p>
+        {syncStatus === "local_only" && (
+          <div className="mt-3 rounded-lg bg-amber-50 p-3">
+            <p className="text-sm font-semibold text-amber-700">
+              ⚠ Tabela não encontrada no Supabase.
+            </p>
+            <p className="mt-1 text-xs text-amber-600">
+              Rode o SQL migration no dashboard do Supabase para ativar a sincronização.
+            </p>
+          </div>
+        )}
+        {syncStatus === "error" && (
+          <div className="mt-3 rounded-lg bg-rose-50 p-3">
+            <p className="text-sm font-semibold text-rose-700">
+              Erro ao sincronizar. Verifique as variáveis de ambiente.
+            </p>
+          </div>
+        )}
       </section>
 
       <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">

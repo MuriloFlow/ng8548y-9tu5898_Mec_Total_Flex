@@ -54,16 +54,20 @@ import {
 const STORAGE_KEY = "total-flex-workshop-state-v2";
 const AUTH_KEY = "total-flex-auth-user-v1";
 
+type SyncStatus = "idle" | "syncing" | "synced" | "error" | "local_only";
+
 type StoreSnapshot = {
   state: WorkshopState | null;
   currentUserId: string | null;
   ready: boolean;
+  syncStatus: SyncStatus;
 };
 
 const serverSnapshot: StoreSnapshot = {
   state: null,
   currentUserId: null,
   ready: false,
+  syncStatus: "idle",
 };
 
 let snapshot: StoreSnapshot = serverSnapshot;
@@ -74,6 +78,7 @@ const listeners = new Set<() => void>();
 type StoreContextValue = {
   state: WorkshopState | null;
   ready: boolean;
+  syncStatus: SyncStatus;
   currentUser: WorkshopState["users"][number] | null;
   login: (username: string, password: string) => Promise<boolean>;
   logout: () => void;
@@ -168,6 +173,7 @@ function getClientSnapshot() {
       state: readStoredState(),
       currentUserId: window.localStorage.getItem(AUTH_KEY),
       ready: true,
+      syncStatus: "idle",
     };
     initialized = true;
   }
@@ -188,6 +194,40 @@ function setWorkshopSnapshot(next: StoreSnapshot) {
     else window.localStorage.removeItem(AUTH_KEY);
   }
   emitStoreChange();
+}
+
+let syncRetryCount = 0;
+const MAX_SYNC_RETRIES = 3;
+
+async function syncToSupabase(state: WorkshopState) {
+  try {
+    const response = await fetch("/api/workshop/sync", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ state }),
+    });
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      if (body?.reason === "table_missing") {
+        console.warn("[TF] Tabela workshop_app_snapshots não encontrada. Rode o SQL no Supabase.");
+        return "local_only" as SyncStatus;
+      }
+      throw new Error(`Sync failed: ${response.status}`);
+    }
+
+    syncRetryCount = 0;
+    return "synced" as SyncStatus;
+  } catch (err) {
+    syncRetryCount++;
+    if (syncRetryCount < MAX_SYNC_RETRIES) {
+      // Retry after delay
+      await new Promise((resolve) => setTimeout(resolve, 1000 * syncRetryCount));
+      return syncToSupabase(state);
+    }
+    console.error("[TF] Sync failed after retries:", err);
+    return "error" as SyncStatus;
+  }
 }
 
 function setWorkshopState(nextState: WorkshopState) {
@@ -250,38 +290,56 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
     if (!process.env.NEXT_PUBLIC_SUPABASE_URL) return;
     remoteLoadStarted = true;
 
+    setWorkshopSnapshot({ ...snapshot, syncStatus: "syncing" });
+
     void fetch("/api/workshop/sync")
       .then(async (response) => {
-        if (!response.ok) return;
-        const payload = (await response.json()) as { state?: WorkshopState | null; updatedAt?: string | null };
-        if (!payload.state?.updatedAt) return;
-        // Only use remote state if it's newer than local
+        if (!response.ok) {
+          setWorkshopSnapshot({ ...snapshot, syncStatus: "error" });
+          return;
+        }
+        const payload = (await response.json()) as {
+          state?: WorkshopState | null;
+          updatedAt?: string | null;
+          source?: string;
+        };
+
+        if (payload.source === "table_missing") {
+          setWorkshopSnapshot({ ...snapshot, syncStatus: "local_only" });
+          return;
+        }
+
+        if (!payload.state?.updatedAt) {
+          setWorkshopSnapshot({ ...snapshot, syncStatus: "synced" });
+          return;
+        }
+
+        // Use remote state if it's newer than local
         const remoteTime = new Date(payload.state.updatedAt).getTime();
         const localTime = new Date(state.updatedAt).getTime();
         if (remoteTime > localTime) {
-          setWorkshopState(payload.state);
+          setWorkshopSnapshot({ ...snapshot, state: payload.state, syncStatus: "synced" });
+        } else {
+          setWorkshopSnapshot({ ...snapshot, syncStatus: "synced" });
         }
       })
-      .catch(() => undefined);
+      .catch(() => {
+        setWorkshopSnapshot({ ...snapshot, syncStatus: "error" });
+      });
   }, [ready, state]);
 
   // ─────────────────────────────────────────────────────────────
-  // Sync to Supabase after every change (debounced)
+  // Sync to Supabase after every change (debounced with retry)
   // ─────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!ready || !state || !process.env.NEXT_PUBLIC_SUPABASE_URL) return;
 
     const timeout = window.setTimeout(() => {
-      void fetch("/api/workshop/sync", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ state }),
-      })
-        .then((response) => {
-          if (!response.ok) console.warn("[TF] Sync failed:", response.status);
-        })
-        .catch(() => undefined);
-    }, 800);
+      setWorkshopSnapshot({ ...snapshot, syncStatus: "syncing" });
+      void syncToSupabase(state).then((status) => {
+        setWorkshopSnapshot({ ...snapshot, syncStatus: status });
+      });
+    }, 600);
 
     return () => window.clearTimeout(timeout);
   }, [ready, state]);
@@ -964,10 +1022,13 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
     [commit, currentUser],
   );
 
+  const { syncStatus } = snapshot;
+
   const value = useMemo<StoreContextValue>(
     () => ({
       state,
       ready,
+      syncStatus,
       currentUser,
       login,
       logout,
@@ -1016,6 +1077,7 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
       removePhoto,
       resetDemoData,
       state,
+      syncStatus,
       toggleOrderItemDone,
       updateOrderItem,
       updateOrder,
