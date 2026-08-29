@@ -200,14 +200,11 @@ function setWorkshopSnapshot(next: StoreSnapshot) {
 let syncRetryCount = 0;
 let lastSyncTime = 0;
 const MAX_SYNC_RETRIES = 3;
-const MIN_SYNC_INTERVAL = 3000; // Don't sync more than once every 3 seconds
+const MIN_SYNC_INTERVAL = 2000;
 
 async function syncToSupabase(state: WorkshopState): Promise<SyncStatus> {
-  // Prevent rapid-fire syncs
   const now = Date.now();
-  if (now - lastSyncTime < MIN_SYNC_INTERVAL) {
-    return "synced";
-  }
+  if (now - lastSyncTime < MIN_SYNC_INTERVAL) return "synced";
   lastSyncTime = now;
 
   try {
@@ -219,38 +216,29 @@ async function syncToSupabase(state: WorkshopState): Promise<SyncStatus> {
 
     const body = await response.json().catch(() => ({}));
 
-    if (!response.ok) {
-      if (body?.reason === "table_missing") {
-        console.warn("[TF] Tabela não existe. Tentando auto-setup...");
-        // Try to auto-create the table
-        const setupResponse = await fetch("/api/workshop/setup", { method: "POST" });
-        const setupBody = await setupResponse.json().catch(() => ({}));
-        if (setupBody?.ok) {
-          // Table created, retry sync
-          const retryResponse = await fetch("/api/workshop/sync", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ state }),
-          });
-          if (retryResponse.ok) return "synced";
-        }
-        return "local_only";
-      }
-      throw new Error(`Sync failed: ${response.status}`);
+    if (!response.ok || body?.ok === false) {
+      const detail = body?.detail || body?.error || `HTTP ${response.status}`;
+      console.error("[TF] Sync failed:", detail);
+      throw new Error(detail);
     }
 
     syncRetryCount = 0;
     return "synced";
   } catch (err) {
     syncRetryCount++;
+    const msg = err instanceof Error ? err.message : String(err);
     if (syncRetryCount < MAX_SYNC_RETRIES) {
-      await new Promise((resolve) => setTimeout(resolve, 1000 * syncRetryCount));
+      await new Promise((r) => setTimeout(r, 1000 * syncRetryCount));
       return syncToSupabase(state);
     }
-    console.error("[TF] Sync failed after retries:", err);
+    console.error("[TF] Sync permanently failed:", msg);
+    // Store the last error for UI display
+    lastSyncError = msg;
     return "error";
   }
 }
+
+let lastSyncError = "";
 
 function setWorkshopState(nextState: WorkshopState) {
   const current = getClientSnapshot();
@@ -306,66 +294,55 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
 
   // ─────────────────────────────────────────────────────────────
   // Hydrate from Supabase on first load
-  // Always tries remote first, falls back to localStorage
+  // Always tries remote, falls back to localStorage
   // ─────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!ready || !state || remoteLoadStarted) return;
-    if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
-      // No Supabase configured — mark as local only
-      setWorkshopSnapshot({ ...snapshot, syncStatus: "local_only" });
-      return;
-    }
     remoteLoadStarted = true;
 
     setWorkshopSnapshot({ ...snapshot, syncStatus: "syncing" });
 
     void (async () => {
       try {
-        // Step 1: Check if table exists, auto-create if not
-        const setupRes = await fetch("/api/workshop/setup", { method: "POST" });
-        const setupBody = await setupRes.json().catch(() => ({}));
+        // Load state from Supabase (endpoint auto-creates table if needed)
+        const syncRes = await fetch("/api/workshop/sync");
+        const syncBody = (await syncRes.json().catch(() => ({}))) as {
+          state?: WorkshopState | null;
+          updatedAt?: string | null;
+          source?: string;
+          detail?: string;
+        };
 
-        if (!setupBody?.ok && setupBody?.error === "table_missing") {
-          // Table couldn't be auto-created — user needs to run SQL manually
+        if (syncRes.status === 503 || syncBody.source === "no_supabase") {
+          // Supabase not configured — work locally only
           setWorkshopSnapshot({ ...snapshot, syncStatus: "local_only" });
           return;
         }
 
-        // Step 2: Load state from Supabase
-        const syncRes = await fetch("/api/workshop/sync");
-        if (!syncRes.ok) {
+        if (syncBody.source === "setup_failed") {
+          // Table couldn't be created — but don't block, just warn
+          console.warn("[TF] Auto-setup failed:", syncBody.detail);
           setWorkshopSnapshot({ ...snapshot, syncStatus: "error" });
           return;
         }
 
-        const syncBody = (await syncRes.json()) as {
-          state?: WorkshopState | null;
-          updatedAt?: string | null;
-          source?: string;
-        };
-
         if (!syncBody.state?.updatedAt) {
           // Supabase is empty — push local state to it
-          setWorkshopSnapshot({ ...snapshot, syncStatus: "syncing" });
           const pushResult = await syncToSupabase(state);
           setWorkshopSnapshot({ ...snapshot, syncStatus: pushResult });
           return;
         }
 
-        // Step 3: Compare timestamps — use the newer one
+        // Compare timestamps — use the newer one
         const remoteTime = new Date(syncBody.state.updatedAt).getTime();
         const localTime = new Date(state.updatedAt).getTime();
 
         if (remoteTime > localTime) {
-          // Remote is newer — use it and update localStorage cache
           setWorkshopSnapshot({ ...snapshot, state: syncBody.state, syncStatus: "synced" });
         } else if (localTime > remoteTime) {
-          // Local is newer — push to Supabase
-          setWorkshopSnapshot({ ...snapshot, syncStatus: "syncing" });
           const pushResult = await syncToSupabase(state);
           setWorkshopSnapshot({ ...snapshot, syncStatus: pushResult });
         } else {
-          // Same timestamp — already in sync
           setWorkshopSnapshot({ ...snapshot, syncStatus: "synced" });
         }
       } catch (err) {
@@ -379,13 +356,15 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
   // Sync to Supabase after every change (debounced)
   // ─────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!ready || !state || !process.env.NEXT_PUBLIC_SUPABASE_URL) return;
-    if (snapshot.syncStatus === "local_only") return; // Don't try if table doesn't exist
+    if (!ready || !state) return;
 
     const timeout = window.setTimeout(() => {
       setWorkshopSnapshot({ ...snapshot, syncStatus: "syncing" });
       void syncToSupabase(state).then((status) => {
         setWorkshopSnapshot({ ...snapshot, syncStatus: status });
+        if (status === "error" && lastSyncError) {
+          toast.error(`Erro ao salvar: ${lastSyncError.slice(0, 120)}`);
+        }
       });
     }, 500);
 
@@ -401,11 +380,10 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
     const status = await syncToSupabase(state);
     setWorkshopSnapshot({ ...snapshot, syncStatus: status });
     if (status === "synced") {
-      toast.success("Dados sincronizados com sucesso!");
-    } else if (status === "local_only") {
-      toast.error("Tabela não encontrada no Supabase. Execute o SQL manualmente.");
+      toast.success("Dados salvos no Supabase com sucesso!");
     } else {
-      toast.error("Erro ao sincronizar. Verifique a conexão.");
+      const detail = lastSyncError || "Verifique as variáveis de ambiente no Vercel.";
+      toast.error(`Falha ao salvar: ${detail.slice(0, 150)}`);
     }
   }, [state, snapshot]);
 
