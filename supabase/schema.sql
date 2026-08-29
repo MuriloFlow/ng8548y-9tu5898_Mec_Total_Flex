@@ -350,6 +350,21 @@ CREATE TABLE IF NOT EXISTS processed_operation_keys (
 );
 
 -- ─────────────────────────────────────────────────────────────
+-- 19. snapshots do estado da aplicacao (sync remoto)
+-- ─────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS workshop_app_snapshots (
+  id         TEXT PRIMARY KEY DEFAULT 'singleton',
+  company_id TEXT NOT NULL DEFAULT 'default',
+  state      JSONB NOT NULL DEFAULT '{}',
+  updated_by TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+INSERT INTO workshop_app_snapshots (id, company_id, state, updated_at)
+VALUES ('singleton', 'default', '{}', now())
+ON CONFLICT (id) DO NOTHING;
+
+-- ─────────────────────────────────────────────────────────────
 -- RLS (Row Level Security) — opcional, ativar conforme necessidade
 -- ─────────────────────────────────────────────────────────────
 -- Para habilitar RLS em todas as tabelas, descomente o bloco abaixo:

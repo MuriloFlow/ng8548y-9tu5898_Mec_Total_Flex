@@ -242,32 +242,46 @@ function ensurePermission(currentUser: StoreContextValue["currentUser"], permiss
 export function WorkshopProvider({ children }: { children: ReactNode }) {
   const { state, currentUserId, ready } = useSyncExternalStore(subscribeStore, getClientSnapshot, () => serverSnapshot);
 
+  // ─────────────────────────────────────────────────────────────
+  // Hydrate from Supabase on first load
+  // ─────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!ready || !state || remoteLoadStarted || !process.env.NEXT_PUBLIC_SUPABASE_URL) return;
+    if (!ready || !state || remoteLoadStarted) return;
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL) return;
     remoteLoadStarted = true;
 
-    void fetch("/api/workshop/snapshot")
+    void fetch("/api/workshop/sync")
       .then(async (response) => {
         if (!response.ok) return;
-        const payload = (await response.json()) as { state?: WorkshopState | null };
+        const payload = (await response.json()) as { state?: WorkshopState | null; updatedAt?: string | null };
         if (!payload.state?.updatedAt) return;
-        if (new Date(payload.state.updatedAt).getTime() > new Date(state.updatedAt).getTime()) {
+        // Only use remote state if it's newer than local
+        const remoteTime = new Date(payload.state.updatedAt).getTime();
+        const localTime = new Date(state.updatedAt).getTime();
+        if (remoteTime > localTime) {
           setWorkshopState(payload.state);
         }
       })
       .catch(() => undefined);
   }, [ready, state]);
 
+  // ─────────────────────────────────────────────────────────────
+  // Sync to Supabase after every change (debounced)
+  // ─────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!ready || !state || !process.env.NEXT_PUBLIC_SUPABASE_URL) return;
 
     const timeout = window.setTimeout(() => {
-      void fetch("/api/workshop/snapshot", {
+      void fetch("/api/workshop/sync", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ state }),
-      }).catch(() => undefined);
-    }, 900);
+      })
+        .then((response) => {
+          if (!response.ok) console.warn("[TF] Sync failed:", response.status);
+        })
+        .catch(() => undefined);
+    }, 800);
 
     return () => window.clearTimeout(timeout);
   }, [ready, state]);
