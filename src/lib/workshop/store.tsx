@@ -202,16 +202,33 @@ let lastSyncTime = 0;
 const MAX_SYNC_RETRIES = 3;
 const MIN_SYNC_INTERVAL = 2000;
 
+/** Strip photos' dataUrl to keep payload small (photos stay local-only) */
+function stripPhotosForSync(state: WorkshopState): Record<string, unknown> {
+  const copy = { ...state } as Record<string, unknown>;
+  if (Array.isArray(copy.photos)) {
+    copy.photos = (copy.photos as Array<Record<string, unknown>>).map((p) => {
+      const { dataUrl: _, ...rest } = p;
+      return rest;
+    });
+  }
+  return copy;
+}
+
 async function syncToSupabase(state: WorkshopState): Promise<SyncStatus> {
   const now = Date.now();
   if (now - lastSyncTime < MIN_SYNC_INTERVAL) return "synced";
   lastSyncTime = now;
 
+  // Strip photos client-side to avoid huge payloads
+  const stripped = stripPhotosForSync(state);
+  const payload = JSON.stringify({ state: stripped });
+  console.log("[TF] Sync payload size:", payload.length, "bytes");
+
   try {
     const response = await fetch("/api/workshop/sync", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ state }),
+      body: payload,
     });
 
     const body = await response.json().catch(() => ({}));
@@ -226,17 +243,18 @@ async function syncToSupabase(state: WorkshopState): Promise<SyncStatus> {
       throw new Error(detail);
     }
 
+    console.log("[TF] Sync OK ✅");
     syncRetryCount = 0;
     return "synced";
   } catch (err) {
     syncRetryCount++;
     const msg = err instanceof Error ? err.message : String(err);
     if (syncRetryCount < MAX_SYNC_RETRIES) {
+      console.warn(`[TF] Sync retry ${syncRetryCount}/${MAX_SYNC_RETRIES}:`, msg);
       await new Promise((r) => setTimeout(r, 1000 * syncRetryCount));
       return syncToSupabase(state);
     }
     console.error("[TF] Sync permanently failed:", msg);
-    // Store the last error for UI display
     lastSyncError = msg;
     return "error";
   }
@@ -344,7 +362,21 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
         const localTime = new Date(state.updatedAt).getTime();
 
         if (remoteTime > localTime) {
-          setWorkshopSnapshot({ ...snapshot, state: syncBody.state, syncStatus: "synced" });
+          // Remote is newer — use it, but merge local photos (with dataUrl) back in
+          const remoteState = syncBody.state as WorkshopState;
+          const localPhotos = state.photos || [];
+          const remotePhotos = remoteState.photos || [];
+          // Keep dataUrl from local photos that exist in remote (by id)
+          const mergedPhotos = remotePhotos.map((rp) => {
+            const localPhoto = localPhotos.find((lp) => lp.id === rp.id);
+            return localPhoto?.dataUrl ? { ...rp, dataUrl: localPhoto.dataUrl } : rp;
+          });
+          // Add any local-only photos (not in remote yet)
+          const remoteIds = new Set(remotePhotos.map((rp) => rp.id));
+          const extraLocal = localPhotos.filter((lp) => !remoteIds.has(lp.id));
+          remoteState.photos = [...mergedPhotos, ...extraLocal];
+          console.log("[TF] Hydration: using remote state, merged", mergedPhotos.length, "photos");
+          setWorkshopSnapshot({ ...snapshot, state: remoteState, syncStatus: "synced" });
         } else if (localTime > remoteTime) {
           const pushResult = await syncToSupabase(state);
           setWorkshopSnapshot({ ...snapshot, syncStatus: pushResult });
