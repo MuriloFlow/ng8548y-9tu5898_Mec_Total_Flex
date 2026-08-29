@@ -54,7 +54,7 @@ import {
 const STORAGE_KEY = "total-flex-workshop-state-v2";
 const AUTH_KEY = "total-flex-auth-user-v1";
 
-type SyncStatus = "idle" | "syncing" | "synced" | "error" | "local_only";
+type SyncStatus = "idle" | "syncing" | "synced" | "error" | "local_only" | "table_missing";
 
 type StoreSnapshot = {
   state: WorkshopState | null;
@@ -218,6 +218,10 @@ async function syncToSupabase(state: WorkshopState): Promise<SyncStatus> {
 
     if (!response.ok || body?.ok === false) {
       const detail = body?.detail || body?.error || `HTTP ${response.status}`;
+      if (body?.reason === "table_missing") {
+        console.warn("[TF] Tabela não existe. Execute SQLFINAL.sql.");
+        return "table_missing";
+      }
       console.error("[TF] Sync failed:", detail);
       throw new Error(detail);
     }
@@ -294,7 +298,6 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
 
   // ─────────────────────────────────────────────────────────────
   // Hydrate from Supabase on first load
-  // Always tries remote, falls back to localStorage
   // ─────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!ready || !state || remoteLoadStarted) return;
@@ -304,7 +307,6 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
 
     void (async () => {
       try {
-        // Load state from Supabase (endpoint auto-creates table if needed)
         const syncRes = await fetch("/api/workshop/sync");
         const syncBody = (await syncRes.json().catch(() => ({}))) as {
           state?: WorkshopState | null;
@@ -314,14 +316,18 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
         };
 
         if (syncRes.status === 503 || syncBody.source === "no_supabase") {
-          // Supabase not configured — work locally only
           setWorkshopSnapshot({ ...snapshot, syncStatus: "local_only" });
           return;
         }
 
-        if (syncBody.source === "setup_failed") {
-          // Table couldn't be created — but don't block, just warn
-          console.warn("[TF] Auto-setup failed:", syncBody.detail);
+        if (syncBody.source === "table_missing") {
+          console.warn("[TF] Tabela não existe. Execute SQLFINAL.sql no Supabase.");
+          setWorkshopSnapshot({ ...snapshot, syncStatus: "table_missing" });
+          return;
+        }
+
+        if (syncBody.source === "error" || syncBody.source === "exception") {
+          console.error("[TF] Sync read error:", syncBody.detail);
           setWorkshopSnapshot({ ...snapshot, syncStatus: "error" });
           return;
         }
@@ -333,7 +339,7 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        // Compare timestamps — use the newer one
+        // Compare timestamps
         const remoteTime = new Date(syncBody.state.updatedAt).getTime();
         const localTime = new Date(state.updatedAt).getTime();
 

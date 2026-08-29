@@ -2907,6 +2907,7 @@ function SettingsView() {
     synced: "Sincronizado ✓",
     error: "Erro ao sincronizar",
     local_only: "Somente local",
+    table_missing: "Tabela não existe",
   }[syncStatus];
   const syncVariant = {
     idle: "muted" as const,
@@ -2914,6 +2915,7 @@ function SettingsView() {
     synced: "success" as const,
     error: "danger" as const,
     local_only: "warning" as const,
+    table_missing: "danger" as const,
   }[syncStatus];
 
   return (
@@ -2943,18 +2945,18 @@ function SettingsView() {
             </p>
           </div>
         )}
-        {supabaseConfigured && syncStatus === "local_only" && (
+        {supabaseConfigured && (syncStatus === "local_only" || syncStatus === "table_missing") && (
           <div className="mt-3 space-y-3">
             <div className="rounded-lg bg-amber-50 p-3">
               <p className="text-sm font-semibold text-amber-700">
-                ⚠ Tabela não encontrada no Supabase.
+                ⚠ Tabela workshop_app_snapshots não existe no Supabase.
               </p>
               <p className="mt-1 text-xs text-amber-600">
-                Clique em "Configurar automaticamente" ou rode o SQL manualmente.
+                Abra o SQL Editor no Supabase e execute o SQLFINAL.sql do repositório.
               </p>
             </div>
-            <Button type="button" className="w-full" onClick={handleSetup} disabled={setupLoading}>
-              {setupLoading ? "Configurando..." : "Configurar automaticamente"}
+            <Button type="button" className="w-full" onClick={forceSync}>
+              Tentar sincronizar novamente
             </Button>
           </div>
         )}
@@ -2962,17 +2964,17 @@ function SettingsView() {
           <div className="mt-3 space-y-3">
             <div className="rounded-lg bg-rose-50 p-3">
               <p className="text-sm font-semibold text-rose-700">
-                Erro ao sincronizar. Verifique as variáveis de ambiente no Vercel.
+                Erro ao sincronizar. Verifique SUPABASE_SERVICE_ROLE_KEY no Vercel.
               </p>
             </div>
-            <Button type="button" variant="outline" className="w-full" onClick={handleSetup} disabled={setupLoading}>
-              {setupLoading ? "Configurando..." : "Tentar configurar novamente"}
+            <Button type="button" variant="outline" className="w-full" onClick={forceSync}>
+              Tentar novamente
             </Button>
           </div>
         )}
-        {supabaseConfigured && syncStatus !== "local_only" && (
-          <Button type="button" variant="outline" className="mt-3 w-full" onClick={forceSync} disabled={syncStatus === "syncing"}>
-            {syncStatus === "syncing" ? "Sincronizando..." : "Sincronizar agora"}
+        {supabaseConfigured && syncStatus !== "local_only" && syncStatus !== "table_missing" && syncStatus !== "error" && (
+          <Button type="button" variant="outline" className="mt-3 w-full" onClick={forceSync}>
+            Sincronizar agora
           </Button>
         )}
         {!supabaseConfigured && (
