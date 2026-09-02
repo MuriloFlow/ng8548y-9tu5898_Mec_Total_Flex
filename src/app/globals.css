@@ -75,6 +75,14 @@ textarea:focus {
   box-shadow: 0 0 0 3px rgba(24, 24, 27, 0.08);
 }
 
+.sheet-scroll-area {
+  max-height: min(72dvh, calc(100dvh - var(--keyboard-inset, 0px) - 112px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: calc(1.5rem + env(safe-area-inset-bottom));
+  scroll-padding-bottom: calc(8rem + var(--keyboard-inset, 0px));
+}
+
 /* Premium badge pulse for important statuses */
 @keyframes gentle-pulse {
   0%, 100% { opacity: 1; }

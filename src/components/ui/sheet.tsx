@@ -10,6 +10,27 @@ export const SheetTrigger = DialogPrimitive.Trigger;
 export const SheetClose = DialogPrimitive.Close;
 export const SheetPortal = DialogPrimitive.Portal;
 
+function useVisualViewportInset() {
+  React.useEffect(() => {
+    if (typeof window === "undefined" || !window.visualViewport) return;
+
+    const viewport = window.visualViewport;
+    const updateInset = () => {
+      const inset = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
+      document.documentElement.style.setProperty("--keyboard-inset", `${Math.round(inset)}px`);
+    };
+
+    updateInset();
+    viewport.addEventListener("resize", updateInset);
+    viewport.addEventListener("scroll", updateInset);
+    return () => {
+      viewport.removeEventListener("resize", updateInset);
+      viewport.removeEventListener("scroll", updateInset);
+      document.documentElement.style.removeProperty("--keyboard-inset");
+    };
+  }, []);
+}
+
 export const SheetOverlay = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Overlay>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Overlay>
@@ -25,28 +46,37 @@ SheetOverlay.displayName = DialogPrimitive.Overlay.displayName;
 export const SheetContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
-  <SheetPortal>
-    <SheetOverlay />
-    <DialogPrimitive.Content
-      ref={ref}
-      className={cn(
-        "fixed inset-x-0 bottom-0 z-50 max-h-[92dvh] rounded-t-3xl border border-zinc-200 bg-white p-0 shadow-2xl outline-none",
-        "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-bottom data-[state=closed]:slide-out-to-bottom",
-        "sm:left-1/2 sm:max-w-xl sm:-translate-x-1/2",
-        className,
-      )}
-      {...props}
-    >
-      <div className="mx-auto mt-3 h-1.5 w-12 rounded-full bg-zinc-200" />
-      {children}
-      <DialogPrimitive.Close className="absolute right-4 top-4 inline-flex size-9 items-center justify-center rounded-full bg-zinc-100 text-zinc-600 transition hover:bg-zinc-200 hover:text-zinc-950">
-        <X className="size-4" />
-        <span className="sr-only">Fechar</span>
-      </DialogPrimitive.Close>
-    </DialogPrimitive.Content>
-  </SheetPortal>
-));
+>(({ className, children, style, ...props }, ref) => {
+  useVisualViewportInset();
+
+  return (
+    <SheetPortal>
+      <SheetOverlay />
+      <DialogPrimitive.Content
+        ref={ref}
+        className={cn(
+          "fixed inset-x-0 z-50 rounded-t-3xl border border-zinc-200 bg-white p-0 shadow-2xl outline-none",
+          "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-bottom data-[state=closed]:slide-out-to-bottom",
+          "sm:left-1/2 sm:max-w-xl sm:-translate-x-1/2",
+          className,
+        )}
+        style={{
+          bottom: "var(--keyboard-inset, 0px)",
+          maxHeight: "calc(92dvh - var(--keyboard-inset, 0px))",
+          ...style,
+        }}
+        {...props}
+      >
+        <div className="mx-auto mt-3 h-1.5 w-12 rounded-full bg-zinc-200" />
+        {children}
+        <DialogPrimitive.Close className="absolute right-4 top-4 inline-flex size-9 items-center justify-center rounded-full bg-zinc-100 text-zinc-600 transition hover:bg-zinc-200 hover:text-zinc-950">
+          <X className="size-4" />
+          <span className="sr-only">Fechar</span>
+        </DialogPrimitive.Close>
+      </DialogPrimitive.Content>
+    </SheetPortal>
+  );
+});
 SheetContent.displayName = DialogPrimitive.Content.displayName;
 
 export function SheetHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {

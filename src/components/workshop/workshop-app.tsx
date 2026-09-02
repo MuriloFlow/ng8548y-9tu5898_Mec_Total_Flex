@@ -290,41 +290,27 @@ function DatabaseSkeleton({ status }: { status: string }) {
         : "Carregando dados do Supabase";
 
   return (
-    <main className="min-h-dvh bg-[#f4f5f7] px-4 py-5 text-zinc-950">
-      <div className="mx-auto flex min-h-[calc(100dvh-40px)] w-full max-w-md flex-col">
-        <header className="flex items-center justify-between">
-          <div className="size-11 animate-pulse rounded-full bg-white shadow-sm" />
-          <div className="size-11 animate-pulse rounded-full bg-white shadow-sm" />
-        </header>
-        <div className="mt-9 h-8 w-72 max-w-full animate-pulse rounded-lg bg-zinc-200" />
-        <section className="mt-5 grid grid-cols-2 gap-3">
-          {[0, 1, 2, 3].map((item) => (
-            <div key={item} className="h-36 rounded-2xl border border-zinc-100 bg-white p-5 shadow-sm">
-              <div className="size-14 animate-pulse rounded-full bg-zinc-100" />
-              <div className="mt-8 h-5 w-24 animate-pulse rounded bg-zinc-200" />
-              <div className="mt-3 h-3 w-20 animate-pulse rounded bg-zinc-100" />
-            </div>
-          ))}
-        </section>
-        <section className="mt-7">
-          <div className="flex items-center justify-between">
-            <div className="h-5 w-28 animate-pulse rounded bg-zinc-200" />
-            <div className="h-4 w-14 animate-pulse rounded bg-zinc-100" />
-          </div>
-          <div className="mt-4 grid grid-cols-4 gap-2">
-            {[0, 1, 2, 3].map((item) => (
-              <div key={item} className="h-20 animate-pulse rounded-2xl bg-white shadow-sm" />
-            ))}
-          </div>
-        </section>
-        <div className="mt-auto rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="size-9 animate-spin rounded-full border-2 border-zinc-200 border-t-zinc-950" />
-            <div>
-              <p className="text-sm font-black">{message}</p>
-              <p className="mt-1 text-xs font-medium text-zinc-500">O app so abre com dados reais do banco.</p>
-            </div>
-          </div>
+    <main className="grid min-h-dvh place-items-center bg-[#f4f5f7] px-5 text-zinc-950">
+      <div className="flex w-full max-w-sm flex-col items-center text-center">
+        <div className="relative grid size-28 place-items-center rounded-[2rem] border border-zinc-200 bg-white shadow-2xl shadow-zinc-950/10">
+          <NextImage
+            src="/assets/logo.png"
+            alt="Auto Mecanica Total Flex"
+            width={180}
+            height={100}
+            priority
+            className="h-16 w-24 object-contain"
+          />
+          <span className="absolute -bottom-2 grid size-8 place-items-center rounded-full bg-zinc-950 text-white shadow-lg">
+            <Car className="size-4" />
+          </span>
+        </div>
+        <div className="mt-8 h-1.5 w-40 overflow-hidden rounded-full bg-zinc-200">
+          <div className="h-full w-1/2 animate-pulse rounded-full bg-zinc-950" />
+        </div>
+        <div className="mt-5 rounded-2xl border border-zinc-200 bg-white px-5 py-4 shadow-sm">
+          <p className="text-sm font-black">{message}</p>
+          <p className="mt-1 text-xs font-medium text-zinc-500">O app so abre com dados reais do banco.</p>
         </div>
       </div>
     </main>
@@ -415,6 +401,8 @@ function WorkspaceShell() {
   const search = searchParams.toString();
   const [customerSheetOpen, setCustomerSheetOpen] = useState(false);
   const [orderSheetOpen, setOrderSheetOpen] = useState(false);
+  const [orderFlowKey, setOrderFlowKey] = useState(0);
+  const [fiscalSheetOpen, setFiscalSheetOpen] = useState(false);
   const selectedCustomerId = useMemo(() => {
     if (!state || view !== "customers") return undefined;
     const params = new URLSearchParams(search);
@@ -438,6 +426,7 @@ function WorkspaceShell() {
     });
     const nextUrl = `${viewPath[nextView]}${query.size ? `?${query.toString()}` : ""}`;
     window.history.pushState(null, "", nextUrl);
+    window.requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: "smooth" }));
   }
 
   function openCustomer(customerId: string) {
@@ -448,6 +437,11 @@ function WorkspaceShell() {
   function openOrder(orderId: string) {
     const order = currentState.orders.find((item) => item.id === orderId && !item.deletedAt);
     navigateTo("orders", { os: order?.number });
+  }
+
+  function openOrderFlow() {
+    setOrderFlowKey((current) => current + 1);
+    setOrderSheetOpen(true);
   }
 
   return (
@@ -527,8 +521,9 @@ function WorkspaceShell() {
                   <HomeView
                     onOpenOrder={openOrder}
                     onOpenCustomer={openCustomer}
-                    onNewOrder={() => setOrderSheetOpen(true)}
+                    onNewOrder={openOrderFlow}
                     onNewCustomer={() => setCustomerSheetOpen(true)}
+                    onOpenFiscalDocument={() => setFiscalSheetOpen(true)}
                     onNavigate={navigateTo}
                   />
                 ) : null}
@@ -539,7 +534,7 @@ function WorkspaceShell() {
                       if (!customerId) navigateTo("customers");
                       else openCustomer(customerId);
                     }}
-                    onNewOrder={() => setOrderSheetOpen(true)}
+                    onNewOrder={openOrderFlow}
                     onOpenOrder={openOrder}
                   />
                 ) : null}
@@ -567,9 +562,9 @@ function WorkspaceShell() {
               ))}
               <button
                 type="button"
-                onClick={() => setOrderSheetOpen(true)}
+                onClick={() => setCustomerSheetOpen(true)}
                 className="mx-auto grid size-16 -translate-y-6 place-items-center rounded-full bg-zinc-950 text-white shadow-2xl shadow-zinc-950/30 ring-8 ring-[#f5f6f8] transition duration-200 hover:-translate-y-7 active:scale-95"
-                title="Nova OS"
+                title="Buscar cliente"
               >
                 <Plus className="size-7" />
               </button>
@@ -581,21 +576,14 @@ function WorkspaceShell() {
         </section>
       </div>
 
-      {!(view === "orders" && selectedOrderId) ? (
-        <Button
-          type="button"
-          size="icon"
-          className="fixed bottom-24 right-5 z-50 size-14 rounded-full shadow-xl lg:bottom-6 lg:right-6"
-          onClick={() => setCustomerSheetOpen(true)}
-          title="Cadastrar ou abrir cliente"
-        >
-          <UserRound className="size-6" />
-        </Button>
-      ) : null}
-
       <CustomerFlowSheet open={customerSheetOpen} onOpenChange={setCustomerSheetOpen} onSelectCustomer={openCustomer} />
+      <FiscalDocumentSheet
+        open={fiscalSheetOpen}
+        onOpenChange={setFiscalSheetOpen}
+        onOpenOrder={openOrder}
+      />
       <OrderFlowSheet
-        key={selectedCustomerId || "order-flow"}
+        key={`${selectedCustomerId || "order-flow"}-${orderFlowKey}`}
         open={orderSheetOpen}
         onOpenChange={setOrderSheetOpen}
         customerId={selectedCustomerId}
@@ -693,12 +681,14 @@ function HomeView({
   onOpenCustomer,
   onNewOrder,
   onNewCustomer,
+  onOpenFiscalDocument,
   onNavigate,
 }: {
   onOpenOrder: (orderId: string) => void;
   onOpenCustomer: (customerId: string) => void;
   onNewOrder: () => void;
   onNewCustomer: () => void;
+  onOpenFiscalDocument: () => void;
   onNavigate: (view: ViewId) => void;
 }) {
   const { state } = useWorkshop();
@@ -716,7 +706,7 @@ function HomeView({
     { title: "Nova OS", text: "Criar ordem", icon: FilePlus2, tone: "bg-violet-100 text-violet-700", onClick: onNewOrder },
     { title: "Buscar cliente", text: "Encontrar cadastro", icon: UserSearch, tone: "bg-blue-100 text-blue-700", onClick: () => onNavigate("customers") },
     { title: "Buscar veiculo", text: "Localizar placa", icon: Car, tone: "bg-emerald-100 text-emerald-700", onClick: () => onNavigate("customers") },
-    { title: "Emitir nota", text: "Gerar documento", icon: ReceiptText, tone: "bg-orange-100 text-orange-700", onClick: () => onNavigate("orders") },
+    { title: "Emitir nota", text: "Buscar por CPF", icon: ReceiptText, tone: "bg-orange-100 text-orange-700", onClick: onOpenFiscalDocument },
   ];
   const quickActions = [
     { label: "Agenda", icon: CalendarClock, onClick: () => onNavigate("history") },
@@ -752,6 +742,23 @@ function HomeView({
       </section>
 
       <section>
+        <h2 className="text-lg font-black">Acesso rapido</h2>
+        <div className="mt-3 grid grid-cols-4 gap-2">
+          {quickActions.map((action) => {
+            const Icon = action.icon;
+            return (
+              <button key={action.label} type="button" onClick={action.onClick} className="grid place-items-center gap-2 text-center text-xs font-black text-zinc-700">
+                <span className="grid size-14 place-items-center rounded-full bg-white text-zinc-900 shadow-sm ring-1 ring-zinc-200 transition hover:-translate-y-0.5 hover:shadow-md">
+                  <Icon className="size-5" />
+                </span>
+                <span className="leading-tight">{action.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section>
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-black">Status das OS</h2>
           <button type="button" onClick={() => onNavigate("orders")} className="text-sm font-black text-blue-600">
@@ -773,23 +780,6 @@ function HomeView({
                 </span>
                 <strong className="mt-3 block text-2xl font-black tracking-tight text-zinc-950">{card.value}</strong>
                 <span className="mt-0.5 block truncate text-xs font-black text-zinc-500">{card.label}</span>
-              </button>
-            );
-          })}
-        </div>
-      </section>
-
-      <section>
-        <h2 className="text-lg font-black">Acesso rapido</h2>
-        <div className="mt-3 grid grid-cols-4 gap-2">
-          {quickActions.map((action) => {
-            const Icon = action.icon;
-            return (
-              <button key={action.label} type="button" onClick={action.onClick} className="grid place-items-center gap-2 text-center text-xs font-black text-zinc-700">
-                <span className="grid size-14 place-items-center rounded-full bg-white text-zinc-900 shadow-sm ring-1 ring-zinc-200 transition hover:-translate-y-0.5 hover:shadow-md">
-                  <Icon className="size-5" />
-                </span>
-                <span className="leading-tight">{action.label}</span>
               </button>
             );
           })}
@@ -867,7 +857,7 @@ function CustomersView({
         </button>
       ))}
       {!filteredCustomers.length ? (
-        <EmptyState icon={UsersRound} title="Nenhum cliente" text="Use o botão no canto inferior para cadastrar o primeiro cliente." />
+        <EmptyState icon={UsersRound} title="Nenhum cliente" text="Use o + da barra inferior para cadastrar o primeiro cliente." />
       ) : null}
     </div>
   );
@@ -1481,7 +1471,7 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
             <SheetTitle>{actionPanel === "menu" ? "Ações da OS" : actionItems.find((item) => item.id === actionPanel)?.label}</SheetTitle>
             <SheetDescription>{order.number} - {customer?.name}</SheetDescription>
           </SheetHeader>
-          <div className="max-h-[72dvh] overflow-y-auto px-5 pb-6">
+          <div className="sheet-scroll-area px-5">
             {actionPanel === "menu" ? (
               <div className="space-y-2">
                 {actionItems.map((item) => {
@@ -1974,7 +1964,7 @@ function CustomerFlowSheet({
           <SheetTitle>Cliente</SheetTitle>
           <SheetDescription>Comece pelo CPF para evitar duplicidade e abrir a ficha correta.</SheetDescription>
         </SheetHeader>
-        <div className="max-h-[72dvh] overflow-y-auto px-5 pb-6">
+        <div className="sheet-scroll-area px-5">
           {draft.step === "cpf" ? (
             <form onSubmit={handleCpf} className="space-y-4">
               <Field label="CPF" error={errors.cpf}>
@@ -2049,6 +2039,32 @@ function CustomerFlowSheet({
   );
 }
 
+function createOrderFlowDraft(customerId?: string) {
+  return {
+    step: "plate",
+    customerId: customerId ?? "",
+    plate: "",
+    vehicleId: "",
+    brand: "",
+    model: "",
+    version: "",
+    year: "",
+    color: "",
+    category: "car",
+    currentMileage: "",
+    fuelLevel: "",
+    entryState: "",
+    priority: "normal",
+    mechanicId: "",
+    estimatedDeliveryAt: "",
+    customerNotes: "",
+    internalNotes: "",
+    operationKey: newId("order_op"),
+  };
+}
+
+type OrderFlowDraft = ReturnType<typeof createOrderFlowDraft>;
+
 function OrderFlowSheet({
   open,
   onOpenChange,
@@ -2063,32 +2079,12 @@ function OrderFlowSheet({
   const { state, createOrUpdateVehicle, createOrder } = useWorkshop();
   const [lookup, setLookup] = useState<VehicleLookupResult | null>(null);
   const [lookupLoading, setLookupLoading] = useState(false);
-  const initial = useMemo(
-    () => ({
-      step: "plate",
-      customerId: customerId ?? "",
-      plate: "",
-      vehicleId: "",
-      brand: "",
-      model: "",
-      version: "",
-      year: "",
-      color: "",
-      category: "car",
-      currentMileage: "",
-      fuelLevel: "",
-      entryState: "",
-      priority: "normal",
-      mechanicId: "",
-      estimatedDeliveryAt: "",
-      customerNotes: "",
-      internalNotes: "",
-      operationKey: newId("order_op"),
-    }),
-    [customerId],
-  );
-  const [draft, patchDraft, resetDraft] = useDraftState(`tf-order-flow-${customerId ?? "none"}`, initial);
+  const [draft, setDraft] = useState<OrderFlowDraft>(() => createOrderFlowDraft(customerId));
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const patchDraft = useCallback((patch: Partial<OrderFlowDraft>) => {
+    setDraft((current) => ({ ...current, ...patch }));
+  }, []);
 
   if (!state) return null;
   const currentState = state;
@@ -2206,7 +2202,7 @@ function OrderFlowSheet({
         },
         String(draft.operationKey),
       );
-      resetDraft();
+      setDraft(createOrderFlowDraft(customerId));
       setErrors({});
       onOrderCreated(order.id);
       onOpenChange(false);
@@ -2224,7 +2220,7 @@ function OrderFlowSheet({
           <SheetTitle>Nova Ordem de Serviço</SheetTitle>
           <SheetDescription>Cliente, placa, veículo e entrada em etapas curtas.</SheetDescription>
         </SheetHeader>
-        <div className="max-h-[72dvh] overflow-y-auto px-5 pb-6">
+        <div className="sheet-scroll-area px-5">
           {!customer ? (
             <div className="space-y-3">
               <Field label="Cliente">
@@ -2423,8 +2419,226 @@ function DocumentSheet({ open, onOpenChange, orderId }: { open: boolean; onOpenC
           <SheetTitle>Documento</SheetTitle>
           <SheetDescription>Preview do documento digital antes de baixar, imprimir ou compartilhar.</SheetDescription>
         </SheetHeader>
-        <div className="max-h-[72dvh] overflow-y-auto px-5 pb-6">
+        <div className="sheet-scroll-area px-5">
           <DocumentPreview orderId={orderId} />
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function FiscalDocumentSheet({
+  open,
+  onOpenChange,
+  onOpenOrder,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onOpenOrder: (orderId: string) => void;
+}) {
+  const { state, generateDocument } = useWorkshop();
+  const [cpf, setCpf] = useState("");
+  const [selectedCustomerId, setSelectedCustomerId] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const [logoDataUrl, setLogoDataUrl] = useState("");
+  const generatedFiscalDocs = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!open || logoDataUrl) return;
+    let cancelled = false;
+    void fetch("/assets/logo.png")
+      .then((response) => response.blob())
+      .then(
+        (blob) =>
+          new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result));
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          }),
+      )
+      .then((dataUrl) => {
+        if (!cancelled) setLogoDataUrl(dataUrl);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [logoDataUrl, open]);
+
+  if (!state) return null;
+  const currentState = state;
+
+  const customer = selectedCustomerId ? getCustomer(currentState, selectedCustomerId) : undefined;
+  const customerOrders = customer ? getOrdersForCustomer(currentState, customer.id).filter((order) => order.status !== "cancelled") : [];
+  const openOrders = customerOrders.filter((order) => !["finished", "delivered", "cancelled"].includes(order.status));
+  const selectedOrder = openOrders[0] ?? customerOrders[0];
+  const selectedVehicle = selectedOrder ? getVehicle(currentState, selectedOrder.vehicleId) : undefined;
+  const selectedTotals = selectedOrder ? getOrderTotals(currentState, selectedOrder.id) : undefined;
+  const latestFiscalDocument = selectedOrder
+    ? currentState.documents
+        .filter((document) => document.orderId === selectedOrder.id && document.type === "fiscal_receipt" && document.status === "generated")
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
+    : undefined;
+
+  function handleOpenChange(nextOpen: boolean) {
+    if (!nextOpen) {
+      setCpf("");
+      setSelectedCustomerId("");
+      setFeedback("");
+    }
+    onOpenChange(nextOpen);
+  }
+
+  function handleCpfSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const normalized = normalizeCpf(cpf);
+    if (!isValidCpf(normalized)) {
+      setFeedback("CPF invalido.");
+      return;
+    }
+
+    const found = findCustomerByCpf(currentState, normalized);
+    if (!found) {
+      setSelectedCustomerId("");
+      setFeedback("Nenhum cliente cadastrado com este CPF.");
+      return;
+    }
+
+    setSelectedCustomerId(found.id);
+    setFeedback("");
+  }
+
+  function ensureFiscalDocument() {
+    if (!selectedOrder) throw new Error("Nenhuma OS encontrada para este cliente.");
+    if (latestFiscalDocument || generatedFiscalDocs.current.has(selectedOrder.id)) return;
+    generateDocument(selectedOrder.id, "fiscal_receipt", newId("document_op"));
+    generatedFiscalDocs.current.add(selectedOrder.id);
+  }
+
+  function handlePdf(mode: "download" | "print" | "share") {
+    if (!selectedOrder) {
+      toast.error("Nenhuma OS encontrada para emitir.");
+      return;
+    }
+
+    try {
+      ensureFiscalDocument();
+      const pdf = buildDocumentPdf(currentState, selectedOrder, "fiscal_receipt", logoDataUrl);
+      const fileName = `${selectedOrder.number}-nota-fiscal.pdf`;
+
+      if (mode === "download") {
+        pdf.save(fileName);
+        toast.success("Nota fiscal baixada.");
+        return;
+      }
+
+      const blob = pdf.output("blob");
+      const url = URL.createObjectURL(blob);
+      if (mode === "print") {
+        window.open(url, "_blank", "noopener,noreferrer");
+        toast.success("Arquivo aberto para impressao.");
+        return;
+      }
+
+      const file = new File([blob], fileName, { type: "application/pdf" });
+      if (navigator.canShare?.({ files: [file] })) {
+        void navigator.share({ title: fileName, files: [file] });
+      } else {
+        pdf.save(fileName);
+      }
+    } catch (error) {
+      toast.error(errorMessage(error));
+    }
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={handleOpenChange}>
+      <SheetContent className="sm:max-w-2xl">
+        <SheetHeader>
+          <SheetTitle>Emitir nota fiscal</SheetTitle>
+          <SheetDescription>Busque o CPF; o sistema usa automaticamente a ultima OS aberta ou, se nao houver, a ultima OS do cliente.</SheetDescription>
+        </SheetHeader>
+        <div className="sheet-scroll-area space-y-4 px-5">
+          <form onSubmit={handleCpfSearch} className="space-y-3">
+            <Field label="CPF do cliente">
+              <Input
+                value={formatCpf(cpf)}
+                onChange={(event) => {
+                  setCpf(normalizeCpf(event.target.value));
+                  setFeedback("");
+                }}
+                inputMode="numeric"
+                autoFocus
+                placeholder="000.000.000-00"
+              />
+            </Field>
+            {feedback ? <p className="text-sm font-semibold text-rose-600">{feedback}</p> : null}
+            <Button type="submit" className="w-full">
+              <Search /> Buscar OS
+            </Button>
+          </form>
+
+          {customer ? (
+            <section className="space-y-3 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-black">{customer.name}</p>
+                  <p className="mt-1 text-sm text-zinc-500">{formatCpf(customer.cpf)} - {formatPhone(customer.phone)}</p>
+                </div>
+                <Badge variant={openOrders.length ? "warning" : "muted"}>{openOrders.length ? "OS aberta" : "ultima OS"}</Badge>
+              </div>
+
+              {selectedOrder && selectedTotals ? (
+                <div className="rounded-lg bg-zinc-50 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-black">{selectedOrder.number}</p>
+                      <p className="mt-1 text-xs font-semibold text-zinc-500">
+                        {selectedVehicle ? `${formatPlate(selectedVehicle.plate)} - ${selectedVehicle.brand} ${selectedVehicle.model}` : "Veiculo nao encontrado"}
+                      </p>
+                    </div>
+                    <Badge variant={selectedOrder.status === "finished" || selectedOrder.status === "delivered" ? "success" : "info"}>
+                      {ORDER_STATUS_LABEL[selectedOrder.status]}
+                    </Badge>
+                  </div>
+                  <div className="mt-3 grid grid-cols-3 gap-2">
+                    <MiniStat label="Total" value={formatCurrency(selectedTotals.total)} />
+                    <MiniStat label="Pago" value={formatCurrency(selectedTotals.paid)} />
+                    <MiniStat label="Saldo" value={formatCurrency(selectedTotals.balance)} />
+                  </div>
+                  {latestFiscalDocument ? (
+                    <p className="mt-3 text-xs font-semibold text-emerald-700">
+                      Nota fiscal registrada em {formatDateTime(latestFiscalDocument.createdAt)}.
+                    </p>
+                  ) : (
+                    <p className="mt-3 text-xs font-semibold text-amber-700">
+                      Ao baixar, imprimir ou compartilhar, o registro fiscal fica salvo no historico da OS.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <EmptyState icon={ReceiptText} title="Cliente sem OS" text="Abra uma OS para este cliente antes de emitir a nota." />
+              )}
+
+              {selectedOrder ? (
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <Button type="button" variant="outline" onClick={() => handlePdf("download")}>
+                    <Download /> Baixar
+                  </Button>
+                  <Button type="button" variant="outline" onClick={() => handlePdf("print")}>
+                    <Printer /> Imprimir
+                  </Button>
+                  <Button type="button" variant="outline" onClick={() => handlePdf("share")}>
+                    <Share2 /> Compartilhar
+                  </Button>
+                  <Button type="button" onClick={() => { onOpenChange(false); onOpenOrder(selectedOrder.id); }}>
+                    <ClipboardCheck /> Ver OS
+                  </Button>
+                </div>
+              ) : null}
+            </section>
+          ) : null}
         </div>
       </SheetContent>
     </Sheet>
