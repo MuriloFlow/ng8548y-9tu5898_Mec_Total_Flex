@@ -66,6 +66,7 @@ import {
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { buildDocumentPdf, DocumentPreview } from "@/components/workshop/document-preview";
+import { BrandMark } from "@/components/workshop/brand-mark";
 import {
   ORDER_STATUS_LABEL,
   ORDER_STATUS_SEQUENCE,
@@ -115,7 +116,7 @@ import type {
   VehicleLookupResult,
   WorkshopState,
 } from "@/lib/workshop/types";
-import { lookupVehicleByPlate } from "@/lib/workshop/vehicle-lookup";
+import { VehicleIdentityFields } from "@/components/workshop/vehicle-identity-fields";
 import { getVehicleCategoryImageFallback, localImageForCategory, resolveVehicleImageUrl } from "@/lib/workshop/vehicle-image";
 import {
   checkAndNotifyReminders,
@@ -314,44 +315,47 @@ function DatabaseSkeleton({
   }
 
   return (
-    <main className="boot-screen relative flex min-h-dvh items-center justify-center overflow-hidden bg-[#fafafa] px-6 py-10 text-zinc-950">
-      <div className="boot-orb boot-orb-a" />
-      <div className="boot-orb boot-orb-b" />
+    <main className="boot-screen relative flex min-h-dvh items-center justify-center px-6 py-10 text-zinc-950">
+      <div className="relative z-10 w-full max-w-sm">
+        <div className="rounded-[1.75rem] border border-white/60 bg-white/85 p-8 shadow-[0_24px_80px_-32px_rgba(0,0,0,0.28)] backdrop-blur-xl">
+          <BrandMark size="md" />
 
-      <div className="relative z-10 w-full max-w-[22rem] text-center">
-        <div className="boot-logo-wrap mx-auto grid size-[5.5rem] place-items-center rounded-[1.75rem] bg-white/80 shadow-[0_20px_50px_-20px_rgba(0,0,0,0.25)] ring-1 ring-black/[0.04] backdrop-blur-xl">
-          <NextImage src="/assets/logo.png" alt="Total Flex" width={120} height={72} priority className="h-12 w-auto object-contain" />
-        </div>
+          <div className="mt-8">
+            {!isError ? (
+              <div className="flex items-center justify-center gap-1.5">
+                {[0, 1, 2].map((dot) => (
+                  <span
+                    key={dot}
+                    className="size-1.5 rounded-full bg-zinc-900/70"
+                    style={{ animation: `boot-dot 1.2s ease-in-out ${dot * 0.15}s infinite` }}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="mx-auto flex size-10 items-center justify-center rounded-full bg-rose-50 ring-1 ring-rose-100">
+                <span className="size-2 rounded-full bg-rose-500" />
+              </div>
+            )}
+          </div>
 
-        <div className="mt-10">
-          {!isError ? (
-            <div className="boot-progress mx-auto h-[3px] w-44 overflow-hidden rounded-full bg-zinc-200/80">
-              <div className="boot-progress-bar h-full w-2/5 rounded-full bg-zinc-900" />
+          <div className="mt-6 space-y-2 text-center">
+            <h1 className="text-base font-semibold tracking-[-0.02em] text-zinc-900">{title}</h1>
+            <p className="text-sm leading-relaxed text-zinc-500">{subtitle}</p>
+          </div>
+
+          {isError ? (
+            <div className="mt-6 space-y-3">
+              <Button type="button" className="h-11 w-full rounded-xl" disabled={retrying} onClick={handleRetry}>
+                {retrying ? "Conectando..." : "Tentar novamente"}
+              </Button>
+              <p className="text-center text-xs leading-relaxed text-zinc-400">
+                Abra o Supabase → SQL Editor → cole o arquivo <strong>SQL_COMPLETO.sql</strong> → Run.
+              </p>
             </div>
           ) : (
-            <div className="mx-auto flex size-11 items-center justify-center rounded-full bg-rose-50 ring-1 ring-rose-100">
-              <span className="size-2.5 rounded-full bg-rose-500" />
-            </div>
+            <p className="mt-6 text-center text-[11px] font-medium uppercase tracking-[0.22em] text-zinc-400">Sincronizando</p>
           )}
         </div>
-
-        <div className="mt-8 space-y-2">
-          <h1 className="text-[1.05rem] font-semibold tracking-[-0.02em] text-zinc-900">{title}</h1>
-          <p className="text-sm leading-relaxed text-zinc-500">{subtitle}</p>
-        </div>
-
-        {isError ? (
-          <div className="mt-8 space-y-3">
-            <Button type="button" className="h-11 w-full rounded-xl" disabled={retrying} onClick={handleRetry}>
-              {retrying ? "Tentando novamente..." : "Tentar conectar novamente"}
-            </Button>
-            <p className="text-xs leading-relaxed text-zinc-400">
-              Confirme no Supabase: projeto ativo, SQL executado e .env reiniciado após salvar.
-            </p>
-          </div>
-        ) : (
-          <p className="mt-8 text-[11px] font-medium uppercase tracking-[0.24em] text-zinc-400">Total Flex OS</p>
-        )}
       </div>
     </main>
   );
@@ -371,63 +375,82 @@ function LoginScreen() {
   }
 
   return (
-    <main className="min-h-dvh bg-[#f7f8fa] px-5 py-6 text-zinc-950">
-      <div className="mx-auto flex min-h-[calc(100dvh-48px)] w-full max-w-md flex-col justify-center">
-        <header className="flex items-center justify-between">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.28em] text-zinc-400">Auto Mecânica</p>
-            <h1 className="mt-1 text-3xl font-black tracking-tight">Total Flex</h1>
-          </div>
-          <div className="grid size-12 place-items-center rounded-2xl bg-zinc-950 text-white shadow-xl shadow-zinc-950/20">
-            <Wrench className="size-5" />
-          </div>
-        </header>
-
-        <section className="my-10 rounded-3xl border border-zinc-200 bg-white p-4 shadow-2xl shadow-zinc-950/8">
-          <div className="rounded-2xl border border-zinc-100 bg-zinc-50 p-4">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-semibold text-zinc-500">Fila de hoje</span>
-              <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-bold text-zinc-700">limpa</span>
-            </div>
-            <div className="mt-5 space-y-3">
-              {["Cliente", "Veículo", "Serviço", "Pagamento"].map((item, index) => (
-                <div key={item} className="flex items-center gap-3">
-                  <span className="grid size-7 place-items-center rounded-full bg-zinc-950 text-xs font-black text-white">{index + 1}</span>
-                  <span className="text-sm font-semibold text-zinc-700">{item}</span>
-                  <span className="h-px flex-1 bg-zinc-200" />
-                </div>
-              ))}
-            </div>
-          </div>
+    <main className="boot-screen min-h-dvh px-5 py-8 text-zinc-950">
+      <div className="mx-auto grid min-h-[calc(100dvh-4rem)] w-full max-w-5xl items-center gap-10 lg:grid-cols-[1fr,400px] lg:gap-16">
+        <section className="hidden flex-col justify-center lg:flex">
+          <BrandMark size="lg" subtitle={false} align="left" />
+          <p className="mt-6 max-w-md text-lg leading-relaxed text-zinc-500">
+            Gestão completa de ordens de serviço, clientes, veículos e pagamentos — tudo sincronizado na nuvem.
+          </p>
+          <ul className="mt-8 space-y-3 text-sm text-zinc-600">
+            <li className="flex items-center gap-2">
+              <span className="size-1.5 rounded-full bg-zinc-900" />
+              Ordens de serviço com fotos e histórico
+            </li>
+            <li className="flex items-center gap-2">
+              <span className="size-1.5 rounded-full bg-zinc-900" />
+              Cadastro de clientes e veículos
+            </li>
+            <li className="flex items-center gap-2">
+              <span className="size-1.5 rounded-full bg-zinc-900" />
+              Pagamentos e documentos integrados
+            </li>
+          </ul>
         </section>
 
-        <form onSubmit={handleSubmit} className="space-y-4 rounded-3xl border border-zinc-200 bg-white p-5 shadow-2xl shadow-zinc-950/8">
-          <div>
-            <h2 className="text-2xl font-black tracking-tight">Entrar no sistema</h2>
-            <p className="mt-1 text-sm text-zinc-500">Acesso inicial configurado para a oficina.</p>
+        <section className="w-full">
+          <div className="rounded-[1.75rem] border border-white/60 bg-white/90 p-6 shadow-[0_24px_80px_-32px_rgba(0,0,0,0.28)] backdrop-blur-xl sm:p-8">
+            <div className="mb-8 lg:hidden">
+              <BrandMark size="sm" />
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-6">
+              <div className="space-y-1">
+                <h2 className="text-xl font-semibold tracking-[-0.02em] text-zinc-900">Entrar no sistema</h2>
+                <p className="text-sm text-zinc-500">Acesse com seu usuário e senha</p>
+              </div>
+
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="username" className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                    Usuário
+                  </Label>
+                  <Input
+                    id="username"
+                    value={username}
+                    onChange={(event) => setUsername(event.target.value)}
+                    autoComplete="username"
+                    placeholder="seu.usuario"
+                    className="h-11 rounded-xl border-zinc-200 bg-zinc-50/80 px-4"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="password" className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                    Senha
+                  </Label>
+                  <Input
+                    id="password"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    type="password"
+                    autoComplete="current-password"
+                    placeholder="••••••••"
+                    className="h-11 rounded-xl border-zinc-200 bg-zinc-50/80 px-4"
+                  />
+                </div>
+              </div>
+
+              <Button type="submit" size="lg" className="h-11 w-full rounded-xl font-medium" disabled={loading}>
+                <ShieldCheck className="size-4" /> {loading ? "Validando acesso..." : "Acessar"}
+              </Button>
+
+              <p className="border-t border-zinc-100 pt-4 text-center text-xs text-zinc-400">
+                Primeiro acesso: <span className="font-medium text-zinc-500">totalflex</span> ·{" "}
+                <span className="font-medium text-zinc-500">1234</span>
+              </p>
+            </form>
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="username">Usuário</Label>
-            <Input id="username" value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="password">Senha</Label>
-            <Input
-              id="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              type="password"
-              autoComplete="current-password"
-            />
-          </div>
-          <Button type="submit" size="lg" className="h-12 w-full rounded-xl" disabled={loading}>
-            <ShieldCheck /> {loading ? "Validando..." : "Acessar"}
-          </Button>
-          <div className="flex items-center justify-between rounded-2xl bg-zinc-50 px-4 py-3 text-xs font-bold text-zinc-500">
-            <span>Supabase obrigatorio</span>
-            <span className="text-emerald-700">sem modo local</span>
-          </div>
-        </form>
+        </section>
       </div>
     </main>
   );
@@ -2123,8 +2146,7 @@ function OrderFlowSheet({
   onOrderCreated: (orderId: string) => void;
 }) {
   const { state, createOrUpdateVehicle, createOrder } = useWorkshop();
-  const [lookup, setLookup] = useState<VehicleLookupResult | null>(null);
-  const [lookupLoading, setLookupLoading] = useState(false);
+  const [knownVehicle, setKnownVehicle] = useState(false);
   const [draft, setDraft] = useState<OrderFlowDraft>(() => createOrderFlowDraft(customerId));
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -2137,7 +2159,7 @@ function OrderFlowSheet({
   const customer = currentState.customers.find((item) => item.id === String(draft.customerId));
   const selectedVehicle = currentState.vehicles.find((item) => item.id === String(draft.vehicleId));
 
-  async function handlePlate(event: FormEvent<HTMLFormElement>) {
+  function handlePlate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const plate = normalizePlate(String(draft.plate));
     if (!isLikelyPlate(plate)) {
@@ -2152,6 +2174,7 @@ function OrderFlowSheet({
       return;
     }
     if (existing) {
+      setKnownVehicle(true);
       patchDraft({
         vehicleId: existing.id,
         brand: existing.brand,
@@ -2162,37 +2185,28 @@ function OrderFlowSheet({
         category: existing.category,
         step: "order",
       });
+      toast.success(`${existing.brand} ${existing.model} reconhecido pela placa.`);
       return;
     }
-    setLookupLoading(true);
-    const result = await lookupVehicleByPlate(plate);
-    setLookup(result);
-    setLookupLoading(false);
-    if (result.status === "found") {
-      patchDraft({
-        plate,
-        brand: result.brand,
-        model: result.model,
-        version: result.version ?? "",
-        year: result.year ? String(result.year) : "",
-        color: result.color ?? "",
-        category: result.category ?? "car",
-        step: "vehicle",
-      });
-    } else {
-      patchDraft({ plate, step: "vehicle" });
-      toast.info(result.message);
-    }
+    setKnownVehicle(false);
+    patchDraft({ plate, step: "vehicle" });
   }
 
   async function handleVehicle(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
       const category = String(draft.category) as Vehicle["category"];
-      const lookupForSave =
-        lookup?.status === "found"
-          ? { ...lookup, imageUrl: localImageForCategory(category) }
-          : undefined;
+      const lookupForSave: VehicleLookupResult = {
+        status: "found",
+        brand: String(draft.brand),
+        model: String(draft.model),
+        version: String(draft.version) || undefined,
+        year: draft.year ? Number(draft.year) : undefined,
+        color: String(draft.color) || undefined,
+        category,
+        provider: "Catálogo FIPE",
+        imageUrl: localImageForCategory(category),
+      };
       const result = createOrUpdateVehicle(
         String(draft.customerId),
         {
@@ -2204,7 +2218,7 @@ function OrderFlowSheet({
           color: String(draft.color),
           category,
         },
-        lookupForSave ?? undefined,
+        lookupForSave,
       );
       patchDraft({ vehicleId: result.vehicle.id, step: "order" });
       setErrors({});
@@ -2285,9 +2299,12 @@ function OrderFlowSheet({
                   className={invalidFieldClass(errors.plate)}
                 />
               </Field>
-              <Button type="submit" className="w-full" disabled={lookupLoading}>
-                {lookupLoading ? "Consultando..." : "Consultar veículo"}
+              <Button type="submit" className="w-full">
+                Continuar
               </Button>
+              <p className="text-center text-xs text-zinc-500">
+                Se o veículo já passou pela oficina, os dados são preenchidos automaticamente.
+              </p>
             </form>
           ) : null}
 
@@ -2296,38 +2313,26 @@ function OrderFlowSheet({
               <Button type="button" variant="ghost" onClick={() => patchDraft({ step: "plate" })}>
                 <ArrowLeft /> Placa
               </Button>
-              {lookup ? (
-                <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm">
-                  <p className="font-bold">{lookup.status === "found" ? "Dados encontrados" : "Cadastro manual liberado"}</p>
-                  <p className="mt-1 text-zinc-500">{lookup.status === "found" ? lookup.provider : lookup.message}</p>
-                </div>
-              ) : null}
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Field label="Marca" error={errors.brand}>
-                  <Input value={String(draft.brand)} onChange={(event) => patchDraft({ brand: event.target.value })} className={invalidFieldClass(errors.brand)} />
-                </Field>
-                <Field label="Modelo" error={errors.model}>
-                  <Input value={String(draft.model)} onChange={(event) => patchDraft({ model: event.target.value })} className={invalidFieldClass(errors.model)} />
-                </Field>
-                <Field label="Versão">
-                  <Input value={String(draft.version)} onChange={(event) => patchDraft({ version: event.target.value })} />
-                </Field>
-                <Field label="Ano" error={errors.year}>
-                  <Input value={String(draft.year)} onChange={(event) => patchDraft({ year: event.target.value })} inputMode="numeric" className={invalidFieldClass(errors.year)} />
-                </Field>
-                <Field label="Cor">
-                  <Input value={String(draft.color)} onChange={(event) => patchDraft({ color: event.target.value })} />
-                </Field>
-                <Field label="Categoria" error={errors.category}>
-                  <select className={selectFieldClass(errors.category)} value={String(draft.category)} onChange={(event) => patchDraft({ category: event.target.value })}>
-                    <option value="car">Carro</option>
-                    <option value="motorcycle">Moto</option>
-                    <option value="truck">Caminhão</option>
-                    <option value="van">Van</option>
-                    <option value="other">Outro</option>
-                  </select>
-                </Field>
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+                <p className="text-sm font-bold">Placa {formatPlate(String(draft.plate))}</p>
+                <p className="mt-0.5 text-xs text-zinc-500">
+                  Primeiro cadastro desta placa. Selecione os dados abaixo.
+                </p>
               </div>
+
+              <VehicleIdentityFields
+                values={{
+                  category: String(draft.category) as Vehicle["category"],
+                  brand: String(draft.brand),
+                  model: String(draft.model),
+                  version: String(draft.version),
+                  year: String(draft.year),
+                  color: String(draft.color),
+                }}
+                onChange={patchDraft}
+                errors={errors}
+              />
+
               <Button type="submit" className="w-full">
                 Continuar
               </Button>
@@ -2477,7 +2482,7 @@ function FiscalDocumentSheet({
   useEffect(() => {
     if (!open || logoDataUrl) return;
     let cancelled = false;
-    void fetch("/assets/logo.png")
+    void fetch("/assets/logo.svg")
       .then((response) => response.blob())
       .then(
         (blob) =>
@@ -2715,7 +2720,7 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
 
   useEffect(() => {
     let cancelled = false;
-    void fetch("/assets/logo.png")
+    void fetch("/assets/logo.svg")
       .then((response) => response.blob())
       .then(
         (blob) =>

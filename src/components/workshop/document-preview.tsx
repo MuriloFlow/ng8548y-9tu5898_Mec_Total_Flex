@@ -197,7 +197,7 @@ export function DocumentPreview({ orderId }: DocumentPreviewProps) {
 
   useEffect(() => {
     let cancelled = false;
-    void fetch("/assets/logo.png")
+    void fetch("/assets/logo.svg")
       .then((response) => response.blob())
       .then(
         (blob) =>
@@ -285,7 +285,7 @@ export function DocumentPreview({ orderId }: DocumentPreviewProps) {
           <div className="grid grid-cols-[1fr_auto] gap-3 border-b-2 border-zinc-950 pb-3">
             <div>
               <Image
-                src="/assets/logo.png"
+                src="/assets/logo.svg"
                 alt="Auto Mecânica Total Flex"
                 width={180}
                 height={90}

@@ -141,7 +141,7 @@ export function checkAndNotifyReminders(state: WorkshopState): ReminderCheckResu
         try {
           new Notification("Total Flex — Retorno", {
             body,
-            icon: "/assets/logo.png",
+            icon: "/assets/logo.svg",
             tag: `tf-reminder-${reminder.id}`,
           });
           notifiedIds.push(reminder.id);

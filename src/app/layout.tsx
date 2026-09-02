@@ -17,8 +17,9 @@ export const metadata: Metadata = {
   description: "Sistema mobile-first de Ordem de Serviço da Auto Mecânica Total Flex.",
   applicationName: "Total Flex OS",
   icons: {
-    icon: "/icon.svg",
+    icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
     shortcut: "/icon.svg",
+    apple: "/icon.svg",
   },
   appleWebApp: {
     capable: true,

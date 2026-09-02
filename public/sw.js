@@ -112,8 +112,8 @@ function checkReminders(reminders, customers, vehicles) {
 
         self.registration.showNotification("Total Flex — Retorno", {
           body,
-          icon: "/assets/logo.png",
-          badge: "/assets/logo.png",
+            icon: "/assets/logo.svg",
+            badge: "/assets/logo.svg",
           tag: `reminder-${reminder.id}`,
           renotify: true,
           data: { reminderId: reminder.id, url: "/" },

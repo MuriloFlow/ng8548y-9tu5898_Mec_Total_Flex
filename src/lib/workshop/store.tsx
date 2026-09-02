@@ -75,7 +75,6 @@ const serverSnapshot: StoreSnapshot = {
 
 let snapshot: StoreSnapshot = serverSnapshot;
 let initialized = false;
-let remoteLoadStarted = false;
 const listeners = new Set<() => void>();
 
 type StoreContextValue = {
@@ -322,13 +321,14 @@ async function fetchRemoteStateOnce(): Promise<{ ok: true; state: WorkshopState 
   try {
     const response = await fetch("/api/workshop/sync", { cache: "no-store" });
     const body = (await response.json().catch(() => ({}))) as {
+      ok?: boolean;
       state?: WorkshopState | null;
       source?: string;
       detail?: string;
       reason?: string;
     };
 
-    if (response.ok && body.source === "supabase" && body.state?.updatedAt) {
+    if (response.ok && body.state?.updatedAt && (body.source === "supabase" || body.ok === true)) {
       return { ok: true, state: body.state };
     }
 
@@ -347,11 +347,20 @@ async function fetchRemoteStateOnce(): Promise<{ ok: true; state: WorkshopState 
   }
 }
 
-async function loadStateFromSupabaseUntilReady() {
-  while (true) {
+async function loadStateFromSupabaseUntilReady(isActive: () => boolean = () => true) {
+  if (getClientSnapshot().ready && getClientSnapshot().state) return;
+
+  const maxAttempts = 5;
+  const retryDelays = [400, 800, 1500, 2500, 4000];
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    if (!isActive()) return;
+
     setWorkshopSnapshot({ ...snapshot, state: null, ready: false, syncStatus: "syncing", syncError: "" });
 
     const result = await fetchRemoteStateOnce();
+    if (!isActive()) return;
+
     if (result.ok) {
       lastSyncError = "";
       setWorkshopSnapshot({
@@ -365,6 +374,7 @@ async function loadStateFromSupabaseUntilReady() {
     }
 
     lastSyncError = result.detail;
+    const isLastAttempt = attempt === maxAttempts;
     setWorkshopSnapshot({
       ...snapshot,
       state: null,
@@ -373,13 +383,9 @@ async function loadStateFromSupabaseUntilReady() {
       syncError: result.detail,
     });
 
-    const retryMs =
-      result.detail.toLowerCase().includes("conectar") ||
-      result.detail.toLowerCase().includes("connection") ||
-      result.detail.toLowerCase().includes("fetch failed")
-        ? 6000
-        : 3000;
-    await wait(retryMs);
+    if (isLastAttempt || !isActive()) return;
+
+    await wait(retryDelays[attempt - 1] ?? 2000);
   }
 }
 
@@ -444,9 +450,11 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
   // Load from Supabase on first load
   // ?????????????????????????????????????????????????????????????
   useEffect(() => {
-    if (remoteLoadStarted) return;
-    remoteLoadStarted = true;
-    void loadStateFromSupabaseUntilReady();
+    let active = true;
+    void loadStateFromSupabaseUntilReady(() => active);
+    return () => {
+      active = false;
+    };
   }, []);
 
   // Flush pending sync when the tab closes

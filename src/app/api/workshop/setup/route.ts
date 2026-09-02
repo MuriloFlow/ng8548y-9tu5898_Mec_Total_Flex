@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createSupabaseAdminClient, isSupabaseServerConfigured } from "@/lib/supabase/server";
+import { isSupabaseServerConfigured } from "@/lib/supabase/server";
 import { restSelectSnapshot } from "@/lib/supabase/rest";
 
 export async function GET() {
@@ -11,35 +11,30 @@ export async function GET() {
     });
   }
 
-  const supabase = createSupabaseAdminClient();
-  if (supabase) {
-    const { error } = await supabase.from("workshop_app_snapshots").select("id").eq("id", "singleton").maybeSingle();
-    if (!error) {
-      return NextResponse.json({ configured: true, tableExists: true, detail: "Conexão OK" });
-    }
-
-    const isMissing =
-      error.code === "42P01" || error.message?.includes("does not exist") || error.message?.includes("relation");
-    if (isMissing) {
-      return NextResponse.json({
-        configured: true,
-        tableExists: false,
-        detail: "Tabela não existe. Execute SQL_COMPLETO.sql no Supabase SQL Editor.",
-      });
-    }
-  }
-
   const rest = await restSelectSnapshot<{ id: string }>("workshop_app_snapshots", "singleton", "id");
   if (!rest.error) {
-    return NextResponse.json({ configured: true, tableExists: true, detail: "Conexão OK (REST)" });
+    return NextResponse.json({ configured: true, tableExists: true, detail: "Conexão OK" });
   }
 
-  const isMissing = rest.error.code === "42P01" || rest.error.message.includes("does not exist");
+  const message = rest.error.message.toLowerCase();
+  const isMissing =
+    rest.error.code === "42P01" ||
+    message.includes("does not exist") ||
+    message.includes("schema cache") ||
+    message.includes("not found");
+  const isConnection =
+    message.includes("fetch failed") ||
+    message.includes("timeout") ||
+    message.includes("abort") ||
+    message.includes("network");
+
   return NextResponse.json({
     configured: true,
-    tableExists: !isMissing,
+    tableExists: !isMissing && !isConnection,
     detail: isMissing
       ? "Tabela não existe. Execute SQL_COMPLETO.sql no Supabase SQL Editor."
-      : `Erro: ${rest.error.message}`,
+      : isConnection
+        ? "Sem resposta do Supabase. Verifique se o projeto está ativo e a URL no .env."
+        : `Erro: ${rest.error.message}`,
   });
 }

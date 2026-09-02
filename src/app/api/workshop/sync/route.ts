@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createSupabaseAdminClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient, isSupabaseServerConfigured } from "@/lib/supabase/server";
 import { restSelectSnapshot, restUpsertSnapshot } from "@/lib/supabase/rest";
 import { syncEntitiesToTables } from "@/lib/workshop/entity-sync";
 import { createSeedState } from "@/lib/workshop/seed";
@@ -24,7 +24,13 @@ type SupabaseError = {
 
 function missingTable(error: SupabaseError) {
   const message = error.message?.toLowerCase() ?? "";
-  return error.code === "42P01" || message.includes("does not exist") || message.includes("relation") || message.includes("not found");
+  return (
+    error.code === "42P01" ||
+    message.includes("does not exist") ||
+    message.includes("relation") ||
+    message.includes("schema cache") ||
+    message.includes("not found")
+  );
 }
 
 function isConnectionError(error: SupabaseError | Error) {
@@ -33,19 +39,21 @@ function isConnectionError(error: SupabaseError | Error) {
     message.includes("fetch failed") ||
     message.includes("network") ||
     message.includes("timeout") ||
+    message.includes("timed out") ||
     message.includes("econnrefused") ||
     message.includes("enotfound") ||
-    message.includes("abort")
+    message.includes("abort") ||
+    message.includes("certificate")
   );
 }
 
 function mapSupabaseReadError(error: SupabaseError) {
   if (missingTable(error)) {
-    return serverError("Tabela workshop_app_snapshots nao existe. Execute SQLFINAL.sql no Supabase.", 503, "table_missing");
+    return serverError("Tabela workshop_app_snapshots nao existe. Execute SQL_COMPLETO.sql no Supabase.", 503, "table_missing");
   }
   if (isConnectionError(error)) {
     return serverError(
-      "Nao foi possivel conectar ao Supabase. Verifique NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY e se o projeto nao esta pausado.",
+      "Sem resposta do Supabase. Confirme: projeto ativo, SQL_COMPLETO.sql executado, .env reiniciado apos salvar.",
       503,
       "connection_failed",
     );
@@ -71,41 +79,22 @@ function serverError(detail: string, status = 500, reason = "supabase_error") {
 }
 
 async function readSnapshot() {
-  const supabase = createSupabaseAdminClient();
-  if (!supabase) {
+  if (!isSupabaseServerConfigured()) {
     return {
       response: serverError("NEXT_PUBLIC_SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY nao configuradas.", 503, "no_supabase"),
     };
   }
 
-  let lastError: SupabaseError | null = null;
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const { data, error } = await supabase.from(TABLE).select("state, updated_at").eq("id", ROW_ID).maybeSingle<SnapshotRow>();
-    if (!error) {
-      return { supabase, row: data ?? null };
-    }
-    lastError = error;
-    if (!isConnectionError(error) || attempt === 2) break;
-    await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
-  }
-
-  // Fallback direto via REST quando o client JS falha (comum no Windows/Node)
   const rest = await restSelectSnapshot<SnapshotRow>(TABLE, ROW_ID, "state,updated_at");
-  if (!rest.error) {
-    return { supabase, row: rest.data };
+  if (rest.error) {
+    return { response: mapSupabaseReadError(rest.error) };
   }
 
-  const mergedError: SupabaseError = {
-    code: rest.error.code ?? lastError?.code,
-    message: rest.error.message || lastError?.message || "Erro desconhecido",
-  };
-
-  return { response: mapSupabaseReadError(mergedError) };
+  return { row: rest.data };
 }
 
 async function writeSnapshot(state: WorkshopState, updatedBy: string) {
-  const supabase = createSupabaseAdminClient();
-  if (!supabase) {
+  if (!isSupabaseServerConfigured()) {
     return {
       response: serverError("SUPABASE_SERVICE_ROLE_KEY nao configurada.", 503, "no_supabase"),
     };
@@ -121,55 +110,40 @@ async function writeSnapshot(state: WorkshopState, updatedBy: string) {
     updated_at: updatedAt,
   };
 
-  const { error } = await supabase.from(TABLE).upsert(rowPayload, { onConflict: "id" });
-
-  if (error && isConnectionError(error)) {
-    const restWrite = await restUpsertSnapshot<SnapshotRow>(TABLE, rowPayload);
-    if (restWrite.error) {
-      return {
-        response: serverError(
-          missingTable(restWrite.error) ? "Tabela workshop_app_snapshots nao existe. Execute SQLFINAL.sql no Supabase." : `Erro Supabase: ${restWrite.error.message}`,
-          missingTable(restWrite.error) ? 503 : 500,
-          missingTable(restWrite.error) ? "table_missing" : "write_failed",
-        ),
-      };
-    }
-  } else if (error) {
+  const restWrite = await restUpsertSnapshot<SnapshotRow>(TABLE, rowPayload);
+  if (restWrite.error) {
     return {
       response: serverError(
-        missingTable(error) ? "Tabela workshop_app_snapshots nao existe. Execute SQLFINAL.sql no Supabase." : `Erro Supabase: ${error.message}`,
-        missingTable(error) ? 503 : 500,
-        missingTable(error) ? "table_missing" : "write_failed",
+        missingTable(restWrite.error)
+          ? "Tabela workshop_app_snapshots nao existe. Execute SQL_COMPLETO.sql no Supabase."
+          : `Erro Supabase: ${restWrite.error.message}`,
+        missingTable(restWrite.error) ? 503 : 500,
+        missingTable(restWrite.error) ? "table_missing" : "write_failed",
       ),
     };
   }
 
-  let saved: SnapshotRow | null = null;
-  const { data: savedClient, error: verifyError } = await supabase.from(TABLE).select("state, updated_at").eq("id", ROW_ID).maybeSingle<SnapshotRow>();
-  if (!verifyError && validState(savedClient?.state)) {
-    saved = savedClient;
-  } else {
-    const restRead = await restSelectSnapshot<SnapshotRow>(TABLE, ROW_ID, "state,updated_at");
-    if (restRead.data && validState(restRead.data.state)) {
-      saved = restRead.data;
-    } else {
-      return {
-        response: serverError(
-          verifyError?.message || restRead.error?.message
-            ? `Salvou, mas nao confirmou leitura: ${verifyError?.message || restRead.error?.message}`
-            : "Salvou, mas nao confirmou o snapshot.",
-          500,
-          "verify_failed",
-        ),
-      };
-    }
+  const restRead = await restSelectSnapshot<SnapshotRow>(TABLE, ROW_ID, "state,updated_at");
+  const saved = restRead.data && validState(restRead.data.state) ? restRead.data : restWrite.data;
+
+  if (!saved || !validState(saved.state)) {
+    return {
+      response: serverError(
+        restRead.error?.message ? `Salvou, mas nao confirmou leitura: ${restRead.error.message}` : "Salvou, mas nao confirmou o snapshot.",
+        500,
+        "verify_failed",
+      ),
+    };
   }
 
-  const entitySync = await syncEntitiesToTables(supabase, saved.state!).catch((err) => ({
-    ok: false as const,
-    error: err instanceof Error ? err.message : String(err),
-    tables: [] as string[],
-  }));
+  const supabase = createSupabaseAdminClient();
+  const entitySync = supabase
+    ? await syncEntitiesToTables(supabase, saved.state!).catch((err) => ({
+        ok: false as const,
+        error: err instanceof Error ? err.message : String(err),
+        tables: [] as string[],
+      }))
+    : { ok: false as const, error: "Client indisponivel", tables: [] as string[] };
 
   return {
     state: saved.state,
@@ -199,7 +173,7 @@ export async function GET() {
   } catch (error) {
     if (error instanceof Error && isConnectionError(error)) {
       return serverError(
-        "Nao foi possivel conectar ao Supabase. Verifique URL, service role key e conexao com a internet.",
+        "Sem resposta do Supabase. Verifique internet, URL do projeto e se o SQL ja foi executado.",
         503,
         "connection_failed",
       );
@@ -229,7 +203,7 @@ export async function PUT(request: Request) {
   } catch (error) {
     if (error instanceof Error && isConnectionError(error)) {
       return serverError(
-        "Nao foi possivel conectar ao Supabase. Verifique URL, service role key e conexao com a internet.",
+        "Sem resposta do Supabase. Verifique internet, URL do projeto e se o SQL ja foi executado.",
         503,
         "connection_failed",
       );

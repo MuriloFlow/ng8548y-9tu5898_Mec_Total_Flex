@@ -1,6 +1,6 @@
 import "server-only";
 
-const FETCH_TIMEOUT_MS = 20_000;
+const FETCH_TIMEOUT_MS = 5_000;
 
 export function supabaseFetch(input: RequestInfo | URL, init?: RequestInit) {
   const controller = new AbortController();
@@ -28,9 +28,14 @@ function mergeSignals(signals: AbortSignal[]) {
 }
 
 export function getSupabaseEnv() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "");
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const url = cleanEnv(process.env.NEXT_PUBLIC_SUPABASE_URL)?.replace(/\/$/, "");
+  const serviceRoleKey = cleanEnv(process.env.SUPABASE_SERVICE_ROLE_KEY);
   return { url, serviceRoleKey };
+}
+
+function cleanEnv(value?: string) {
+  if (!value) return undefined;
+  return value.trim().replace(/^["']|["']$/g, "");
 }
 
 export function supabaseRestHeaders(serviceRoleKey: string) {

@@ -17,12 +17,24 @@ export async function restSelectSnapshot<T>(table: string, rowId: string, select
 
     const text = await response.text();
     if (!response.ok) {
-      const missing = text.includes("does not exist") || text.includes("42P01") || response.status === 404;
+      let parsed: { code?: string; message?: string } | null = null;
+      try {
+        parsed = text ? (JSON.parse(text) as { code?: string; message?: string }) : null;
+      } catch {
+        parsed = null;
+      }
+      const message = parsed?.message || text.slice(0, 240) || `HTTP ${response.status}`;
+      const missing =
+        parsed?.code === "42P01" ||
+        parsed?.code === "PGRST205" ||
+        message.includes("does not exist") ||
+        message.includes("schema cache") ||
+        response.status === 404;
       return {
         data: null,
         error: {
-          code: missing ? "42P01" : undefined,
-          message: text.slice(0, 240) || `HTTP ${response.status}`,
+          code: missing ? "42P01" : parsed?.code,
+          message,
         },
       };
     }
@@ -56,12 +68,23 @@ export async function restUpsertSnapshot<T>(table: string, payload: Record<strin
 
     const text = await response.text();
     if (!response.ok) {
-      const missing = text.includes("does not exist") || text.includes("42P01");
+      let parsed: { code?: string; message?: string } | null = null;
+      try {
+        parsed = text ? (JSON.parse(text) as { code?: string; message?: string }) : null;
+      } catch {
+        parsed = null;
+      }
+      const message = parsed?.message || text.slice(0, 240) || `HTTP ${response.status}`;
+      const missing =
+        parsed?.code === "42P01" ||
+        parsed?.code === "PGRST205" ||
+        message.includes("does not exist") ||
+        message.includes("schema cache");
       return {
         data: null,
         error: {
-          code: missing ? "42P01" : undefined,
-          message: text.slice(0, 240) || `HTTP ${response.status}`,
+          code: missing ? "42P01" : parsed?.code,
+          message,
         },
       };
     }
