@@ -67,11 +67,12 @@ export async function PUT(request: Request) {
   }
 
   const { error } = await auth.supabase.from("workshop_app_snapshots").upsert({
+    id: "singleton",
     company_id: auth.companyId,
     state: body.data.state,
     updated_by: auth.userId,
     updated_at: new Date().toISOString(),
-  });
+  }, { onConflict: "id" });
 
   if (error) return NextResponse.json({ error: "snapshot_write_failed" }, { status: 500 });
   return NextResponse.json({ ok: true });

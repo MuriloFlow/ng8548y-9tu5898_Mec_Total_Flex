@@ -7,7 +7,6 @@ import { jsPDF } from "jspdf";
 import { QRCodeCanvas } from "qrcode.react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { DOCUMENT_TYPE_LABEL, PAYMENT_METHOD_LABEL, PAYMENT_STATUS_LABEL } from "@/lib/workshop/constants";
 import {
   formatCpf,
@@ -414,23 +413,6 @@ export function DocumentPreview({ orderId }: DocumentPreviewProps) {
         <Button type="button" variant="outline" onClick={() => downloadPdf("share")}>
           <Share2 /> Compartilhar
         </Button>
-      </div>
-
-      <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-semibold text-zinc-900">Modelo físico usado como referência</p>
-            <p className="text-xs text-zinc-500">Cabeçalho, campos, tabela e totais foram recriados digitalmente.</p>
-          </div>
-          <Badge variant="muted">PDF</Badge>
-        </div>
-        <Image
-          src="/assets/total-flex-modelo-original.png"
-          alt="Modelo original da Auto Mecânica Total Flex"
-          width={1071}
-          height={1516}
-          className="mt-3 max-h-56 w-full rounded-lg border border-zinc-200 object-contain"
-        />
       </div>
     </div>
   );

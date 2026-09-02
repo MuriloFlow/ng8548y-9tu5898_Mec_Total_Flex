@@ -51,10 +51,10 @@ import {
   vehicleSchema,
 } from "./validation";
 
-const STORAGE_KEY = "total-flex-workshop-state-v2";
+const LEGACY_STORAGE_KEY = "total-flex-workshop-state-v2";
 const AUTH_KEY = "total-flex-auth-user-v1";
 
-type SyncStatus = "idle" | "syncing" | "synced" | "error" | "local_only" | "table_missing";
+type SyncStatus = "idle" | "syncing" | "synced" | "error" | "table_missing";
 
 type StoreSnapshot = {
   state: WorkshopState | null;
@@ -96,6 +96,7 @@ type StoreContextValue = {
       district?: string;
     },
   ) => { customer: Customer; created: boolean };
+  deleteCustomer: (customerId: string) => void;
   createOrUpdateVehicle: (
     customerId: string,
     input: {
@@ -125,6 +126,7 @@ type StoreContextValue = {
     idempotencyKey: string,
   ) => ServiceOrder;
   updateOrder: (orderId: string, patch: Partial<ServiceOrder>, action?: AuditAction) => ServiceOrder;
+  deleteOrder: (orderId: string) => void;
   advanceOrderStatus: (orderId: string, status?: OrderStatus) => ServiceOrder;
   upsertInspectionItem: (orderId: string, itemId: string, status: InspectionStatus, notes?: string) => void;
   addPhoto: (orderId: string, dataUrl: string, label: string) => void;
@@ -141,7 +143,11 @@ type StoreContextValue = {
     idempotencyKey: string,
   ) => Payment;
   generateDocument: (orderId: string, type: DocumentType, idempotencyKey: string) => DocumentRecord;
-  finishService: (orderId: string, input: { finalAmount: number; mechanicSignatureDataUrl?: string; userChangedAmount?: boolean }, idempotencyKey: string) => DocumentRecord;
+  finishService: (
+    orderId: string,
+    input: { finalAmount: number; mechanicSignatureDataUrl?: string; userChangedAmount?: boolean; laborAmount?: number },
+    idempotencyKey: string,
+  ) => DocumentRecord;
   addCatalogService: (input: Omit<CatalogService, "id" | "createdAt" | "updatedAt">) => CatalogService;
   addCatalogProduct: (input: Omit<CatalogProduct, "id" | "createdAt" | "updatedAt">) => CatalogProduct;
 };
@@ -152,13 +158,19 @@ function cloneState(state: WorkshopState): WorkshopState {
   return structuredClone(state);
 }
 
-function readStoredState() {
+function readStoredAuthUserId() {
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return createSeedState();
-    return JSON.parse(raw) as WorkshopState;
+    return window.localStorage.getItem(AUTH_KEY);
   } catch {
-    return createSeedState();
+    return null;
+  }
+}
+
+function clearLegacyLocalState() {
+  try {
+    window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+  } catch {
+    return;
   }
 }
 
@@ -170,10 +182,11 @@ function getClientSnapshot() {
   if (typeof window === "undefined") return serverSnapshot;
 
   if (!initialized) {
+    clearLegacyLocalState();
     snapshot = {
-      state: readStoredState(),
-      currentUserId: window.localStorage.getItem(AUTH_KEY),
-      ready: true,
+      state: null,
+      currentUserId: readStoredAuthUserId(),
+      ready: false,
       syncStatus: "idle",
     };
     initialized = true;
@@ -190,7 +203,6 @@ function subscribeStore(listener: () => void) {
 function setWorkshopSnapshot(next: StoreSnapshot) {
   snapshot = next;
   if (typeof window !== "undefined") {
-    if (next.state) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next.state));
     if (next.currentUserId) window.localStorage.setItem(AUTH_KEY, next.currentUserId);
     else window.localStorage.removeItem(AUTH_KEY);
   }
@@ -202,16 +214,9 @@ let lastSyncTime = 0;
 const MAX_SYNC_RETRIES = 3;
 const MIN_SYNC_INTERVAL = 2000;
 
-/** Strip photos' dataUrl to keep payload small (photos stay local-only) */
+/** Keep the snapshot complete; Supabase is the source for every app record. */
 function stripPhotosForSync(state: WorkshopState): Record<string, unknown> {
-  const copy = { ...state } as Record<string, unknown>;
-  if (Array.isArray(copy.photos)) {
-    copy.photos = (copy.photos as Array<Record<string, unknown>>).map((p) => {
-      const { dataUrl: _, ...rest } = p;
-      return rest;
-    });
-  }
-  return copy;
+  return state as unknown as Record<string, unknown>;
 }
 
 async function syncToSupabase(state: WorkshopState): Promise<SyncStatus> {
@@ -219,7 +224,6 @@ async function syncToSupabase(state: WorkshopState): Promise<SyncStatus> {
   if (now - lastSyncTime < MIN_SYNC_INTERVAL) return "synced";
   lastSyncTime = now;
 
-  // Strip photos client-side to avoid huge payloads
   const stripped = stripPhotosForSync(state);
   const payload = JSON.stringify({ state: stripped });
   console.log("[TF] Sync payload size:", payload.length, "bytes");
@@ -261,6 +265,55 @@ async function syncToSupabase(state: WorkshopState): Promise<SyncStatus> {
 }
 
 let lastSyncError = "";
+
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function loadStateFromSupabaseUntilReady() {
+  while (true) {
+    setWorkshopSnapshot({ ...snapshot, state: null, ready: false, syncStatus: "syncing" });
+
+    try {
+      const response = await fetch("/api/workshop/sync", { cache: "no-store" });
+      const body = (await response.json().catch(() => ({}))) as {
+        state?: WorkshopState | null;
+        source?: string;
+        detail?: string;
+        reason?: string;
+      };
+
+      if (response.ok && body.source === "supabase" && body.state?.updatedAt) {
+        syncRetryCount = 0;
+        lastSyncError = "";
+        setWorkshopSnapshot({
+          ...snapshot,
+          state: body.state,
+          ready: true,
+          syncStatus: "synced",
+        });
+        return;
+      }
+
+      lastSyncError =
+        body.detail ||
+        body.reason ||
+        (body.source === "supabase" ? "Snapshot inicial vazio. Execute SQLFINAL.sql novamente." : "HTTP " + response.status);
+
+      setWorkshopSnapshot({
+        ...snapshot,
+        state: null,
+        ready: false,
+        syncStatus: body.source === "table_missing" || body.reason === "table_missing" ? "table_missing" : "error",
+      });
+    } catch (err) {
+      lastSyncError = err instanceof Error ? err.message : String(err);
+      setWorkshopSnapshot({ ...snapshot, state: null, ready: false, syncStatus: "error" });
+    }
+
+    await wait(2500);
+  }
+}
 
 function setWorkshopState(nextState: WorkshopState) {
   const current = getClientSnapshot();
@@ -314,81 +367,14 @@ function ensurePermission(currentUser: StoreContextValue["currentUser"], permiss
 export function WorkshopProvider({ children }: { children: ReactNode }) {
   const { state, currentUserId, ready } = useSyncExternalStore(subscribeStore, getClientSnapshot, () => serverSnapshot);
 
-  // ─────────────────────────────────────────────────────────────
-  // Hydrate from Supabase on first load
-  // ─────────────────────────────────────────────────────────────
+  // ?????????????????????????????????????????????????????????????
+  // Load from Supabase on first load
+  // ?????????????????????????????????????????????????????????????
   useEffect(() => {
-    if (!ready || !state || remoteLoadStarted) return;
+    if (remoteLoadStarted) return;
     remoteLoadStarted = true;
-
-    setWorkshopSnapshot({ ...snapshot, syncStatus: "syncing" });
-
-    void (async () => {
-      try {
-        const syncRes = await fetch("/api/workshop/sync");
-        const syncBody = (await syncRes.json().catch(() => ({}))) as {
-          state?: WorkshopState | null;
-          updatedAt?: string | null;
-          source?: string;
-          detail?: string;
-        };
-
-        if (syncRes.status === 503 || syncBody.source === "no_supabase") {
-          setWorkshopSnapshot({ ...snapshot, syncStatus: "local_only" });
-          return;
-        }
-
-        if (syncBody.source === "table_missing") {
-          console.warn("[TF] Tabela não existe. Execute SQLFINAL.sql no Supabase.");
-          setWorkshopSnapshot({ ...snapshot, syncStatus: "table_missing" });
-          return;
-        }
-
-        if (syncBody.source === "error" || syncBody.source === "exception") {
-          console.error("[TF] Sync read error:", syncBody.detail);
-          setWorkshopSnapshot({ ...snapshot, syncStatus: "error" });
-          return;
-        }
-
-        if (!syncBody.state?.updatedAt) {
-          // Supabase is empty — push local state to it
-          const pushResult = await syncToSupabase(state);
-          setWorkshopSnapshot({ ...snapshot, syncStatus: pushResult });
-          return;
-        }
-
-        // Compare timestamps
-        const remoteTime = new Date(syncBody.state.updatedAt).getTime();
-        const localTime = new Date(state.updatedAt).getTime();
-
-        if (remoteTime > localTime) {
-          // Remote is newer — use it, but merge local photos (with dataUrl) back in
-          const remoteState = syncBody.state as WorkshopState;
-          const localPhotos = state.photos || [];
-          const remotePhotos = remoteState.photos || [];
-          // Keep dataUrl from local photos that exist in remote (by id)
-          const mergedPhotos = remotePhotos.map((rp) => {
-            const localPhoto = localPhotos.find((lp) => lp.id === rp.id);
-            return localPhoto?.dataUrl ? { ...rp, dataUrl: localPhoto.dataUrl } : rp;
-          });
-          // Add any local-only photos (not in remote yet)
-          const remoteIds = new Set(remotePhotos.map((rp) => rp.id));
-          const extraLocal = localPhotos.filter((lp) => !remoteIds.has(lp.id));
-          remoteState.photos = [...mergedPhotos, ...extraLocal];
-          console.log("[TF] Hydration: using remote state, merged", mergedPhotos.length, "photos");
-          setWorkshopSnapshot({ ...snapshot, state: remoteState, syncStatus: "synced" });
-        } else if (localTime > remoteTime) {
-          const pushResult = await syncToSupabase(state);
-          setWorkshopSnapshot({ ...snapshot, syncStatus: pushResult });
-        } else {
-          setWorkshopSnapshot({ ...snapshot, syncStatus: "synced" });
-        }
-      } catch (err) {
-        console.error("[TF] Hydration failed:", err);
-        setWorkshopSnapshot({ ...snapshot, syncStatus: "error" });
-      }
-    })();
-  }, [ready, state]);
+    void loadStateFromSupabaseUntilReady();
+  }, []);
 
   // ─────────────────────────────────────────────────────────────
   // Sync to Supabase after every change (debounced)
@@ -423,7 +409,7 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
       const detail = lastSyncError || "Verifique as variáveis de ambiente no Vercel.";
       toast.error(`Falha ao salvar: ${detail.slice(0, 150)}`);
     }
-  }, [state, snapshot]);
+  }, [state]);
 
   const currentUser = useMemo(() => {
     if (!state || !currentUserId) return null;
@@ -447,10 +433,12 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(
     async (username: string, password: string) => {
-      if (!state) return false;
+      if (!state) {
+        toast.error("A base do Supabase ainda esta carregando.");
+        return false;
+      }
       const normalized = username.trim().toLowerCase();
       let user = state.users.find((item) => item.username === normalized && item.active);
-      const isSeedPassword = normalized === "totalflex" && password === "1234";
       let remoteAccepted = false;
 
       try {
@@ -485,13 +473,21 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
               setWorkshopState(next);
             }
           }
+        } else if (response.status === 401) {
+          toast.error("Usuario ou senha invalidos.");
+          return false;
+        } else {
+          const payload = (await response.json().catch(() => ({}))) as { error?: string };
+          toast.error(payload.error === "supabase_not_configured" ? "Supabase nao configurado." : "Banco de dados indisponivel.");
+          return false;
         }
       } catch {
-        // Development without Supabase credentials falls back to the seeded local user.
+        toast.error("Nao foi possivel validar o login no banco.");
+        return false;
       }
 
-      if (!user || (!remoteAccepted && !isSeedPassword)) {
-        toast.error("Usuário ou senha inválidos.");
+      if (!user || !remoteAccepted) {
+        toast.error("Usuario ou senha invalidos.");
         return false;
       }
 
@@ -514,7 +510,8 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
   const resetDemoData = useCallback(() => {
     const next = createSeedState();
     setWorkshopState(next);
-    toast.success("Base local restaurada.");
+    void syncToSupabase(next);
+    toast.success("Base inicial enviada ao Supabase.");
   }, []);
 
   const createOrUpdateCustomer: StoreContextValue["createOrUpdateCustomer"] = useCallback(
@@ -556,6 +553,40 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
         draft.customers.unshift(customer);
         pushAudit(draft, userId, "customer", customer.id, "created", `Cliente ${customer.name} criado.`, undefined, customer);
         return { customer, created: true };
+      });
+    },
+    [commit, currentUser],
+  );
+
+  const deleteCustomer: StoreContextValue["deleteCustomer"] = useCallback(
+    (customerId) => {
+      ensurePermission(currentUser, "customers:write");
+      commit((draft, userId) => {
+        const customer = draft.customers.find((item) => item.id === customerId && !item.deletedAt);
+        if (!customer) throw new Error("Cliente nao encontrado.");
+        const now = new Date().toISOString();
+        const before = { ...customer };
+        customer.deletedAt = now;
+        customer.updatedAt = now;
+
+        draft.vehicles
+          .filter((vehicle) => vehicle.customerId === customerId && !vehicle.deletedAt)
+          .forEach((vehicle) => {
+            vehicle.deletedAt = now;
+            vehicle.updatedAt = now;
+          });
+
+        draft.orders
+          .filter((order) => order.customerId === customerId && !order.deletedAt)
+          .forEach((order) => {
+            order.status = "cancelled";
+            order.paymentStatus = "cancelled";
+            order.deletedAt = now;
+            order.updatedAt = now;
+            order.version += 1;
+          });
+
+        pushAudit(draft, userId, "customer", customer.id, "cancelled", `Cliente ${customer.name} excluido.`, before, customer);
       });
     },
     [commit, currentUser],
@@ -683,6 +714,25 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
         Object.assign(order, patch, { updatedAt: new Date().toISOString(), version: order.version + 1 });
         pushAudit(draft, userId, "order", order.id, action, `OS ${order.number} atualizada.`, before, order);
         return order;
+      });
+    },
+    [commit, currentUser],
+  );
+
+  const deleteOrder: StoreContextValue["deleteOrder"] = useCallback(
+    (orderId) => {
+      ensurePermission(currentUser, "orders:approve");
+      commit((draft, userId) => {
+        const order = draft.orders.find((item) => item.id === orderId);
+        if (!order) throw new Error("OS nao encontrada.");
+        const before = { ...order };
+        const now = new Date().toISOString();
+        order.status = "cancelled";
+        order.paymentStatus = "cancelled";
+        order.deletedAt = now;
+        order.updatedAt = now;
+        order.version += 1;
+        pushAudit(draft, userId, "order", order.id, "cancelled", `OS ${order.number} excluida.`, before, order);
       });
     },
     [commit, currentUser],
@@ -1002,6 +1052,12 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
         if (!order) throw new Error("OS não encontrada.");
 
         const now = new Date().toISOString();
+        const laborAmount = Math.round((input.laborAmount ?? 0) * 100) / 100;
+        if (!Number.isFinite(laborAmount) || laborAmount < 0) {
+          throw new Error("Informe uma mao de obra valida.");
+        }
+        order.finalLaborAmount = laborAmount;
+
         const totalsBefore = getOrderTotals(draft, orderId);
 
         // Only add an adjustment item when the user explicitly changed the final value
@@ -1119,6 +1175,8 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
       createOrUpdateCustomer,
       createOrUpdateVehicle,
       createOrder,
+      deleteCustomer,
+      deleteOrder,
       updateOrder,
       advanceOrderStatus,
       upsertInspectionItem,
@@ -1149,6 +1207,8 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
       createOrder,
       createQuoteRevision,
       currentUser,
+      deleteCustomer,
+      deleteOrder,
       finishService,
       generateDocument,
       login,

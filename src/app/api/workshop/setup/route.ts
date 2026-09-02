@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /**
- * Total Flex — Setup (simplified)
+ * Total Flex - Setup (simplified)
  * Returns config status so the UI can guide the user.
  * Table creation is done manually via SQLFINAL.sql.
  */
@@ -18,7 +18,7 @@ export async function GET() {
 
   // Test connection by reading the table
   try {
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from("workshop_app_snapshots")
       .select("id")
       .eq("id", "singleton")

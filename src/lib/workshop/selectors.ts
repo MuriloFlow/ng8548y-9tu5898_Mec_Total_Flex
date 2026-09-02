@@ -21,17 +21,29 @@ export function getEmployeeName(state: WorkshopState, employeeId?: string) {
   return state.employees.find((employee) => employee.id === employeeId)?.name ?? "Não definido";
 }
 
+export function isFinalLaborItem(item: OrderItem) {
+  return item.description.trim().toLowerCase() === "mao de obra";
+}
+
 export function getOrderItems(state: WorkshopState, orderId: string) {
-  return state.orderItems.filter((item) => item.orderId === orderId);
+  return state.orderItems.filter((item) => item.orderId === orderId && !isFinalLaborItem(item));
 }
 
 export function getOrderPayments(state: WorkshopState, orderId: string) {
   return state.payments.filter((payment) => payment.orderId === orderId && payment.status === "confirmed");
 }
 
-export function calculateItemsTotals(items: OrderItem[], payments: Payment[] = []): OrderTotals {
+export function getFinalLaborAmount(state: WorkshopState, orderId: string) {
+  const order = state.orders.find((item) => item.id === orderId);
+  if (typeof order?.finalLaborAmount === "number") return Math.max(0, order.finalLaborAmount);
+  return state.orderItems
+    .filter((item) => item.orderId === orderId && isFinalLaborItem(item))
+    .reduce((total, item) => total + item.laborPrice * item.quantity, 0);
+}
+
+export function calculateItemsTotals(items: OrderItem[], payments: Payment[] = [], finalLaborAmount = 0): OrderTotals {
   const subtotalParts = items.reduce((total, item) => total + item.unitPrice * item.quantity, 0);
-  const subtotalLabor = items.reduce((total, item) => total + item.laborPrice * item.quantity, 0);
+  const subtotalLabor = items.reduce((total, item) => total + item.laborPrice * item.quantity, 0) + finalLaborAmount;
   const discount = items.reduce((total, item) => total + item.discount, 0);
   const paid = payments.reduce((total, payment) => total + payment.amount, 0);
   const total = Math.max(0, subtotalParts + subtotalLabor - discount);
@@ -47,7 +59,7 @@ export function calculateItemsTotals(items: OrderItem[], payments: Payment[] = [
 }
 
 export function getOrderTotals(state: WorkshopState, orderId: string) {
-  return calculateItemsTotals(getOrderItems(state, orderId), getOrderPayments(state, orderId));
+  return calculateItemsTotals(getOrderItems(state, orderId), getOrderPayments(state, orderId), getFinalLaborAmount(state, orderId));
 }
 
 export function getOrdersForCustomer(state: WorkshopState, customerId: string) {

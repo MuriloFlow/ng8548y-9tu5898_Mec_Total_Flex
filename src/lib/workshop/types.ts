@@ -143,6 +143,7 @@ export type ServiceOrder = {
   internalNotes?: string;
   customerSignatureDataUrl?: string;
   mechanicSignatureDataUrl?: string;
+  finalLaborAmount?: number;
   approvedQuoteRevisionId?: string;
   idempotencyKey?: string;
   version: number;

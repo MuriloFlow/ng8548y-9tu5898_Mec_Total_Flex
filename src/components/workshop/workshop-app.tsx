@@ -16,6 +16,9 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowLeft,
+  ArrowDownLeft,
+  ArrowUpRight,
+  Bell,
   CalendarClock,
   Camera,
   Car,
@@ -26,12 +29,14 @@ import {
   CreditCard,
   Clock,
   Download,
+  FilePlus2,
   FileText,
   Home,
   Images,
   Info,
+  Landmark,
   LogOut,
-  Package,
+  Menu,
   Plus,
   ReceiptText,
   Search,
@@ -41,7 +46,9 @@ import {
   ShieldCheck,
   Printer,
   UserRound,
+  UserSearch,
   UsersRound,
+  Wallet,
   Wrench,
 } from "lucide-react";
 import { ZodError } from "zod";
@@ -99,8 +106,6 @@ import {
 } from "@/lib/workshop/selectors";
 import { useWorkshop, WorkshopProvider } from "@/lib/workshop/store";
 import type {
-  CatalogProduct,
-  CatalogService,
   DocumentRecord,
   OrderItem,
   OrderStatus,
@@ -122,16 +127,37 @@ import {
 
 type ViewId = "home" | "customers" | "orders" | "finance" | "history" | "settings";
 type BadgeVariant = "default" | "muted" | "success" | "warning" | "danger" | "info";
+type FinanceTab = "extract" | "pending" | "receipts";
+type FinanceTransaction = {
+  id: string;
+  type: "Entrada" | "Saida" | "Pendente";
+  title: string;
+  detail: string;
+  amount: number;
+  date: string;
+  icon: typeof Home;
+  tone: string;
+  orderId: string;
+};
 
 const selectClass =
   "h-12 w-full rounded-lg border border-zinc-200 bg-white px-4 text-base text-zinc-950 shadow-sm outline-none transition focus:border-zinc-900 focus:ring-4 focus:ring-zinc-100";
 
 const tabs: Array<{ id: ViewId; label: string; icon: typeof Home }> = [
-  { id: "home", label: "Home", icon: Home },
-  { id: "customers", label: "Clientes", icon: UsersRound },
+  { id: "home", label: "Inicio", icon: Home },
   { id: "orders", label: "OS", icon: ClipboardCheck },
+  { id: "customers", label: "Clientes", icon: UsersRound },
   { id: "finance", label: "Financeiro", icon: CircleDollarSign },
   { id: "history", label: "Histórico", icon: Clock },
+];
+
+const mobileTabs: Array<{ id: ViewId; label: string; icon: typeof Home }> = [
+  { id: "home", label: "Inicio", icon: Home },
+  { id: "orders", label: "OS", icon: ClipboardCheck },
+  { id: "customers", label: "Clientes", icon: UsersRound },
+  { id: "finance", label: "Faturamento", icon: Landmark },
+  { id: "history", label: "Historico", icon: Clock },
+  { id: "settings", label: "Menu", icon: Menu },
 ];
 
 const viewPath: Record<ViewId, string> = {
@@ -147,7 +173,6 @@ function viewFromPath(pathname: string): ViewId {
   const match = (Object.entries(viewPath) as Array<[ViewId, string]>).find(([, path]) => path !== "/" && pathname.startsWith(path));
   return match?.[0] ?? "home";
 }
-
 function errorMessage(error: unknown) {
   if (error instanceof ZodError) return error.issues[0]?.message ?? "Dados inválidos.";
   if (error instanceof Error) return error.message;
@@ -222,9 +247,8 @@ export function WorkshopApp() {
     </WorkshopProvider>
   );
 }
-
 function WorkshopRuntime() {
-  const { ready, currentUser, state } = useWorkshop();
+  const { ready, currentUser, state, syncStatus } = useWorkshop();
 
   // Register service worker on mount
   useEffect(() => {
@@ -251,18 +275,60 @@ function WorkshopRuntime() {
   }, [currentUser, state]);
 
   if (!ready) {
-    return (
-      <main className="grid min-h-dvh place-items-center bg-zinc-50 px-5">
-        <div className="w-full max-w-sm space-y-4">
-          <div className="h-24 animate-pulse rounded-lg bg-white shadow-sm" />
-          <div className="h-12 animate-pulse rounded-lg bg-zinc-200" />
-          <div className="h-12 animate-pulse rounded-lg bg-zinc-100" />
-        </div>
-      </main>
-    );
+    return <DatabaseSkeleton status={syncStatus} />;
   }
 
   return currentUser ? <WorkspaceShell /> : <LoginScreen />;
+}
+
+function DatabaseSkeleton({ status }: { status: string }) {
+  const message =
+    status === "table_missing"
+      ? "Aguardando SQLFINAL.sql no Supabase"
+      : status === "error"
+        ? "Tentando reconectar ao banco"
+        : "Carregando dados do Supabase";
+
+  return (
+    <main className="min-h-dvh bg-[#f4f5f7] px-4 py-5 text-zinc-950">
+      <div className="mx-auto flex min-h-[calc(100dvh-40px)] w-full max-w-md flex-col">
+        <header className="flex items-center justify-between">
+          <div className="size-11 animate-pulse rounded-full bg-white shadow-sm" />
+          <div className="size-11 animate-pulse rounded-full bg-white shadow-sm" />
+        </header>
+        <div className="mt-9 h-8 w-72 max-w-full animate-pulse rounded-lg bg-zinc-200" />
+        <section className="mt-5 grid grid-cols-2 gap-3">
+          {[0, 1, 2, 3].map((item) => (
+            <div key={item} className="h-36 rounded-2xl border border-zinc-100 bg-white p-5 shadow-sm">
+              <div className="size-14 animate-pulse rounded-full bg-zinc-100" />
+              <div className="mt-8 h-5 w-24 animate-pulse rounded bg-zinc-200" />
+              <div className="mt-3 h-3 w-20 animate-pulse rounded bg-zinc-100" />
+            </div>
+          ))}
+        </section>
+        <section className="mt-7">
+          <div className="flex items-center justify-between">
+            <div className="h-5 w-28 animate-pulse rounded bg-zinc-200" />
+            <div className="h-4 w-14 animate-pulse rounded bg-zinc-100" />
+          </div>
+          <div className="mt-4 grid grid-cols-4 gap-2">
+            {[0, 1, 2, 3].map((item) => (
+              <div key={item} className="h-20 animate-pulse rounded-2xl bg-white shadow-sm" />
+            ))}
+          </div>
+        </section>
+        <div className="mt-auto rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="size-9 animate-spin rounded-full border-2 border-zinc-200 border-t-zinc-950" />
+            <div>
+              <p className="text-sm font-black">{message}</p>
+              <p className="mt-1 text-xs font-medium text-zinc-500">O app so abre com dados reais do banco.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  );
 }
 
 function LoginScreen() {
@@ -279,8 +345,8 @@ function LoginScreen() {
   }
 
   return (
-    <main className="min-h-dvh bg-white px-5 py-6 text-zinc-950">
-      <div className="mx-auto flex min-h-[calc(100dvh-48px)] w-full max-w-md flex-col">
+    <main className="min-h-dvh bg-[#f7f8fa] px-5 py-6 text-zinc-950">
+      <div className="mx-auto flex min-h-[calc(100dvh-48px)] w-full max-w-md flex-col justify-center">
         <header className="flex items-center justify-between">
           <div>
             <p className="text-xs font-bold uppercase tracking-[0.28em] text-zinc-400">Auto Mecânica</p>
@@ -291,8 +357,8 @@ function LoginScreen() {
           </div>
         </header>
 
-        <section className="my-10 rounded-lg border border-zinc-200 bg-zinc-50 p-4">
-          <div className="rounded-lg border border-zinc-200 bg-white p-4">
+        <section className="my-10 rounded-3xl border border-zinc-200 bg-white p-4 shadow-2xl shadow-zinc-950/8">
+          <div className="rounded-2xl border border-zinc-100 bg-zinc-50 p-4">
             <div className="flex items-center justify-between">
               <span className="text-sm font-semibold text-zinc-500">Fila de hoje</span>
               <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-bold text-zinc-700">limpa</span>
@@ -309,7 +375,7 @@ function LoginScreen() {
           </div>
         </section>
 
-        <form onSubmit={handleSubmit} className="mt-auto space-y-4 rounded-lg border border-zinc-200 bg-zinc-50 p-4 shadow-sm">
+        <form onSubmit={handleSubmit} className="space-y-4 rounded-3xl border border-zinc-200 bg-white p-5 shadow-2xl shadow-zinc-950/8">
           <div>
             <h2 className="text-2xl font-black tracking-tight">Entrar no sistema</h2>
             <p className="mt-1 text-sm text-zinc-500">Acesso inicial configurado para a oficina.</p>
@@ -328,9 +394,13 @@ function LoginScreen() {
               autoComplete="current-password"
             />
           </div>
-          <Button type="submit" size="lg" className="w-full" disabled={loading}>
+          <Button type="submit" size="lg" className="h-12 w-full rounded-xl" disabled={loading}>
             <ShieldCheck /> {loading ? "Validando..." : "Acessar"}
           </Button>
+          <div className="flex items-center justify-between rounded-2xl bg-zinc-50 px-4 py-3 text-xs font-bold text-zinc-500">
+            <span>Supabase obrigatorio</span>
+            <span className="text-emerald-700">sem modo local</span>
+          </div>
         </form>
       </div>
     </main>
@@ -355,7 +425,7 @@ function WorkspaceShell() {
     if (!state || view !== "orders") return undefined;
     const params = new URLSearchParams(search);
     const os = params.get("os")?.trim().toLowerCase();
-    return os ? state.orders.find((item) => item.number.toLowerCase() === os || item.id === os)?.id : undefined;
+    return os ? state.orders.find((item) => !item.deletedAt && (item.number.toLowerCase() === os || item.id === os))?.id : undefined;
   }, [search, state, view]);
 
   if (!state || !currentUser) return null;
@@ -376,7 +446,7 @@ function WorkspaceShell() {
   }
 
   function openOrder(orderId: string) {
-    const order = currentState.orders.find((item) => item.id === orderId);
+    const order = currentState.orders.find((item) => item.id === orderId && !item.deletedAt);
     navigateTo("orders", { os: order?.number });
   }
 
@@ -414,16 +484,27 @@ function WorkspaceShell() {
         </aside>
 
         <section className="mx-auto flex min-h-dvh w-full max-w-xl flex-col bg-white shadow-sm lg:max-w-none lg:bg-transparent lg:shadow-none">
-          <header className="sticky top-0 z-30 border-b border-zinc-200 bg-white/95 px-4 py-3 backdrop-blur lg:bg-[#f5f6f8]/95">
+          <header className="sticky top-0 z-30 border-b border-zinc-200 bg-white/90 px-4 py-3 backdrop-blur-xl lg:bg-[#f5f6f8]/90">
             <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-[0.22em] text-zinc-400">Total Flex</p>
-                <h1 className="text-lg font-black tracking-tight">{view === "home" ? "Operação" : tabs.find((tab) => tab.id === view)?.label ?? "Ajustes"}</h1>
+              <div className="flex min-w-0 items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => navigateTo("settings")}
+                  className="grid size-10 shrink-0 place-items-center rounded-full bg-white text-zinc-800 shadow-sm ring-1 ring-zinc-200 transition active:scale-95"
+                  title="Menu"
+                >
+                  <UserRound className="size-5" />
+                </button>
+                <div className="min-w-0">
+                  <p className="text-xs font-bold uppercase text-zinc-400">Total Flex</p>
+                  <h1 className="truncate text-lg font-black tracking-tight">
+                    {view === "home" ? "Inicio" : tabs.find((tab) => tab.id === view)?.label ?? "Menu"}
+                  </h1>
+                </div>
               </div>
               <div className="flex items-center gap-2">
-                <Badge variant="muted">{ROLE_LABEL[currentUser.role]}</Badge>
-                <Button type="button" variant="ghost" size="icon" onClick={() => navigateTo("settings")} title="Ajustes">
-                  <Settings />
+                <Button type="button" variant="ghost" size="icon" onClick={() => navigateTo("history")} title="Alertas">
+                  <Bell />
                 </Button>
                 <Button type="button" variant="ghost" size="icon" onClick={logout} title="Sair">
                   <LogOut />
@@ -446,6 +527,9 @@ function WorkspaceShell() {
                   <HomeView
                     onOpenOrder={openOrder}
                     onOpenCustomer={openCustomer}
+                    onNewOrder={() => setOrderSheetOpen(true)}
+                    onNewCustomer={() => setCustomerSheetOpen(true)}
+                    onNavigate={navigateTo}
                   />
                 ) : null}
                 {view === "customers" ? (
@@ -470,30 +554,28 @@ function WorkspaceShell() {
                   />
                 ) : null}
                 {view === "finance" ? <FinanceView onOpenOrder={openOrder} /> : null}
-                {view === "history" ? <HistoryView onOpenOrder={openOrder} onOpenCustomer={openCustomer} /> : null}
+                {view === "history" ? <HistoryView onOpenOrder={openOrder} /> : null}
                 {view === "settings" ? <SettingsView /> : null}
               </motion.div>
             </AnimatePresence>
           </div>
 
-          <nav className="fixed inset-x-0 bottom-0 z-40 mx-auto max-w-xl border-t border-zinc-200 bg-white px-3 pb-[calc(env(safe-area-inset-bottom)+10px)] pt-2 shadow-[0_-12px_32px_rgba(24,24,27,0.08)] lg:hidden">
-            <div className="grid grid-cols-5 gap-1">
-              {tabs.map((tab) => {
-                const Icon = tab.icon;
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => navigateTo(tab.id)}
-                  className={`grid h-14 place-items-center rounded-xl text-[11px] font-bold transition-all duration-200 ${
-                    view === tab.id ? "bg-zinc-950 text-white shadow-lg shadow-zinc-950/20" : "text-zinc-500 active:text-zinc-950"
-                  }`}
-                  >
-                    <Icon className="size-5" />
-                    <span>{tab.label}</span>
-                  </button>
-                );
-              })}
+          <nav className="fixed inset-x-0 bottom-0 z-40 mx-auto max-w-xl px-3 pb-[calc(env(safe-area-inset-bottom)+12px)] lg:hidden">
+            <div className="relative grid h-[76px] grid-cols-7 items-center rounded-[28px] border border-zinc-200/80 bg-white/92 px-2 shadow-[0_-10px_34px_rgba(24,24,27,0.14)] backdrop-blur-xl">
+              {mobileTabs.slice(0, 3).map((tab) => (
+                <MobileNavButton key={tab.id} tab={tab} active={view === tab.id} onClick={() => navigateTo(tab.id)} />
+              ))}
+              <button
+                type="button"
+                onClick={() => setOrderSheetOpen(true)}
+                className="mx-auto grid size-16 -translate-y-6 place-items-center rounded-full bg-zinc-950 text-white shadow-2xl shadow-zinc-950/30 ring-8 ring-[#f5f6f8] transition duration-200 hover:-translate-y-7 active:scale-95"
+                title="Nova OS"
+              >
+                <Plus className="size-7" />
+              </button>
+              {mobileTabs.slice(3).map((tab) => (
+                <MobileNavButton key={tab.id} tab={tab} active={view === tab.id} onClick={() => navigateTo(tab.id)} />
+              ))}
             </div>
           </nav>
         </section>
@@ -503,7 +585,7 @@ function WorkspaceShell() {
         <Button
           type="button"
           size="icon"
-          className="fixed bottom-24 right-5 z-50 size-14 shadow-xl lg:bottom-6 lg:right-6"
+          className="fixed bottom-24 right-5 z-50 size-14 rounded-full shadow-xl lg:bottom-6 lg:right-6"
           onClick={() => setCustomerSheetOpen(true)}
           title="Cadastrar ou abrir cliente"
         >
@@ -573,119 +655,160 @@ function GlobalSearchBox({
   );
 }
 
+function MobileNavButton({
+  tab,
+  active,
+  onClick,
+}: {
+  tab: { id: ViewId; label: string; icon: typeof Home };
+  active: boolean;
+  onClick: () => void;
+}) {
+  const Icon = tab.icon;
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="relative grid h-14 place-items-center rounded-2xl text-zinc-500 transition duration-200 active:scale-95"
+      title={tab.label}
+      aria-label={tab.label}
+    >
+      {active ? (
+        <motion.span
+          layoutId="mobile-nav-active"
+          className="absolute inset-1 rounded-2xl bg-zinc-950 shadow-lg shadow-zinc-950/15"
+          transition={{ type: "spring", stiffness: 420, damping: 34 }}
+        />
+      ) : null}
+      <span className={`relative grid place-items-center ${active ? "text-white" : "text-zinc-500"}`}>
+        <Icon className="size-5" />
+      </span>
+    </button>
+  );
+}
+
 function HomeView({
   onOpenOrder,
   onOpenCustomer,
+  onNewOrder,
+  onNewCustomer,
+  onNavigate,
 }: {
   onOpenOrder: (orderId: string) => void;
   onOpenCustomer: (customerId: string) => void;
+  onNewOrder: () => void;
+  onNewCustomer: () => void;
+  onNavigate: (view: ViewId) => void;
 }) {
   const { state } = useWorkshop();
   if (!state) return null;
 
-  const today = new Date().toISOString().slice(0, 10);
-  const inService = state.orders.filter((order) => order.status === "in_service").length;
-  const waitingApproval = state.orders.filter((order) => order.status === "waiting_approval").length;
-  const waitingParts = state.orders.filter((order) => order.status === "waiting_parts").length;
-  const ready = state.orders.filter((order) => order.status === "finished").length;
-  const pendingPayments = state.orders.filter((order) => order.paymentStatus !== "paid").length;
-  const todayOrders = state.orders.filter((order) => order.createdAt.slice(0, 10) === today).length;
-  const openOrders = state.orders.filter((order) => !["finished", "delivered", "cancelled"].includes(order.status)).slice(0, 5);
+  const activeOrders = state.orders.filter((order) => !order.deletedAt);
+  const openOrders = activeOrders.filter((order) => !["finished", "delivered", "cancelled"].includes(order.status));
+  const statusCards = [
+    { label: "Abertas", value: openOrders.length, tone: "from-sky-500 to-blue-600", icon: ClipboardCheck },
+    { label: "Em andamento", value: activeOrders.filter((order) => order.status === "in_service").length, tone: "from-amber-500 to-orange-600", icon: Wrench },
+    { label: "Aguardando", value: activeOrders.filter((order) => order.status === "waiting_approval" || order.status === "waiting_parts").length, tone: "from-violet-500 to-fuchsia-600", icon: Clock },
+    { label: "Concluidas", value: activeOrders.filter((order) => order.status === "finished" || order.status === "delivered").length, tone: "from-emerald-500 to-teal-600", icon: Check },
+  ];
+  const primaryActions = [
+    { title: "Nova OS", text: "Criar ordem", icon: FilePlus2, tone: "bg-violet-100 text-violet-700", onClick: onNewOrder },
+    { title: "Buscar cliente", text: "Encontrar cadastro", icon: UserSearch, tone: "bg-blue-100 text-blue-700", onClick: () => onNavigate("customers") },
+    { title: "Buscar veiculo", text: "Localizar placa", icon: Car, tone: "bg-emerald-100 text-emerald-700", onClick: () => onNavigate("customers") },
+    { title: "Emitir nota", text: "Gerar documento", icon: ReceiptText, tone: "bg-orange-100 text-orange-700", onClick: () => onNavigate("orders") },
+  ];
+  const quickActions = [
+    { label: "Agenda", icon: CalendarClock, onClick: () => onNavigate("history") },
+    { label: "Cliente", icon: UserRound, onClick: onNewCustomer },
+    { label: "Historico", icon: Clock, onClick: () => onNavigate("history") },
+    { label: "Faturamento", icon: Landmark, onClick: () => onNavigate("finance") },
+  ];
+  const focusOrders = openOrders.slice(0, 3);
 
   return (
-    <div className="space-y-5">
-      <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-semibold text-zinc-400 uppercase tracking-wide">Hoje</p>
-            <h2 className="mt-1 text-3xl font-black tracking-tight">{todayOrders} atendimento{todayOrders === 1 ? "" : "s"}</h2>
-          </div>
-          <div className="grid size-12 place-items-center rounded-2xl bg-zinc-950 text-white shadow-lg">
-            <Clock className="size-5" />
-          </div>
-        </div>
-        <div className="mt-4 grid grid-cols-3 gap-2">
-          <MiniStat label="Fazendo" value={inService} />
-          <MiniStat label="Aprovar" value={waitingApproval} />
-          <MiniStat label="Retirar" value={ready} />
+    <div className="space-y-7 pb-2">
+      <section>
+        <h2 className="text-2xl font-black tracking-tight text-zinc-950 sm:text-3xl">O que deseja fazer hoje?</h2>
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-2 xl:grid-cols-4">
+          {primaryActions.map((action) => {
+            const Icon = action.icon;
+            return (
+              <button
+                key={action.title}
+                type="button"
+                onClick={action.onClick}
+                className="group min-h-36 rounded-2xl border border-zinc-100 bg-white p-5 text-left shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-zinc-200/60 active:scale-[0.98]"
+              >
+                <span className={"grid size-14 place-items-center rounded-full transition group-hover:scale-105 " + action.tone}>
+                  <Icon className="size-6" />
+                </span>
+                <span className="mt-7 block text-base font-black text-zinc-950">{action.title}</span>
+                <span className="mt-1 block text-sm font-semibold text-zinc-500">{action.text}</span>
+              </button>
+            );
+          })}
         </div>
       </section>
 
-      <section className="grid grid-cols-2 gap-3">
-        <MetricCard label="Aguard. peças" value={waitingParts} icon={Package} tone="zinc" />
-        <MetricCard label="Pagamentos" value={pendingPayments} icon={CircleDollarSign} tone="zinc" />
+      <section>
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-black">Status das OS</h2>
+          <button type="button" onClick={() => onNavigate("orders")} className="text-sm font-black text-blue-600">
+            Ver todas
+          </button>
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {statusCards.map((card) => {
+            const Icon = card.icon;
+            return (
+              <button
+                key={card.label}
+                type="button"
+                onClick={() => onNavigate("orders")}
+                className="group min-h-24 overflow-hidden rounded-2xl border border-zinc-100 bg-white p-3 text-left shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-zinc-200/60 active:scale-[0.98]"
+              >
+                <span className={"grid size-9 place-items-center rounded-full bg-gradient-to-br text-white shadow-sm " + card.tone}>
+                  <Icon className="size-4" />
+                </span>
+                <strong className="mt-3 block text-2xl font-black tracking-tight text-zinc-950">{card.value}</strong>
+                <span className="mt-0.5 block truncate text-xs font-black text-zinc-500">{card.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-lg font-black">Acesso rapido</h2>
+        <div className="mt-3 grid grid-cols-4 gap-2">
+          {quickActions.map((action) => {
+            const Icon = action.icon;
+            return (
+              <button key={action.label} type="button" onClick={action.onClick} className="grid place-items-center gap-2 text-center text-xs font-black text-zinc-700">
+                <span className="grid size-14 place-items-center rounded-full bg-white text-zinc-900 shadow-sm ring-1 ring-zinc-200 transition hover:-translate-y-0.5 hover:shadow-md">
+                  <Icon className="size-5" />
+                </span>
+                <span className="leading-tight">{action.label}</span>
+              </button>
+            );
+          })}
+        </div>
       </section>
 
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-base font-black">Fila operacional</h2>
-          <Badge variant="muted">{openOrders.length} abertas</Badge>
+          <h2 className="text-lg font-black">Em foco</h2>
+          <Badge variant="muted">{focusOrders.length} agora</Badge>
         </div>
-        {openOrders.length ? (
-          openOrders.map((order) => (
+        {focusOrders.length ? (
+          focusOrders.map((order) => (
             <OrderListCard key={order.id} order={order} onOpenOrder={onOpenOrder} onOpenCustomer={onOpenCustomer} compact />
           ))
         ) : (
-          <EmptyState icon={ClipboardCheck} title="Nenhuma OS aberta" text="Use o botão de cliente no canto inferior para localizar ou cadastrar um cliente." />
+          <EmptyState icon={ClipboardCheck} title="Nenhuma OS aberta" text="Crie uma OS ou busque um cliente para iniciar o atendimento." />
         )}
       </section>
-
-      {state.reminders.length ? (
-        <section className="space-y-3">
-          <h2 className="text-base font-black">Próximos retornos</h2>
-          {state.reminders.slice(0, 3).map((reminder) => {
-            const customer = getCustomer(state, reminder.customerId);
-            const vehicle = getVehicle(state, reminder.vehicleId);
-            return (
-              <button
-                key={reminder.id}
-                type="button"
-                className="w-full rounded-lg border border-zinc-200 bg-white p-4 text-left shadow-sm"
-                onClick={() => onOpenCustomer(reminder.customerId)}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-bold">{reminder.title}</p>
-                    <p className="mt-1 text-sm text-zinc-500">
-                      {customer?.name} · {vehicle?.model} · {reminder.dueMileage?.toLocaleString("pt-BR")} km
-                    </p>
-                  </div>
-                  <Badge variant="info">{formatDate(reminder.dueDate)}</Badge>
-                </div>
-              </button>
-            );
-          })}
-        </section>
-      ) : null}
-    </div>
-  );
-}
-
-function MetricCard({
-  label,
-  value,
-  icon: Icon,
-  tone,
-}: {
-  label: string;
-  value: number | string;
-  icon: typeof Home;
-  tone: "sky" | "amber" | "rose" | "emerald" | "zinc";
-}) {
-  const toneClass = {
-    sky: "bg-sky-50 text-sky-700",
-    amber: "bg-amber-50 text-amber-700",
-    rose: "bg-rose-50 text-rose-700",
-    emerald: "bg-emerald-50 text-emerald-700",
-    zinc: "bg-zinc-100 text-zinc-700",
-  }[tone];
-  return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm transition hover:shadow-md">
-      <div className={`grid size-9 place-items-center rounded-xl ${toneClass}`}>
-        <Icon className="size-4" />
-      </div>
-      <p className="mt-4 text-2xl font-black tracking-tight">{value}</p>
-      <p className="mt-1 text-xs font-semibold text-zinc-400 uppercase tracking-wide">{label}</p>
     </div>
   );
 }
@@ -705,8 +828,9 @@ function CustomersView({
   const [filter, setFilter] = useState("");
   if (!state) return null;
 
-  const selectedCustomer = state.customers.find((customer) => customer.id === selectedCustomerId);
+  const selectedCustomer = state.customers.find((customer) => customer.id === selectedCustomerId && !customer.deletedAt);
   const filteredCustomers = state.customers.filter((customer) => {
+    if (customer.deletedAt) return false;
     const query = filter.trim().toLowerCase();
     if (!query) return true;
     return customer.name.toLowerCase().includes(query) || customer.cpf.includes(normalizeCpf(query)) || customer.phone.includes(normalizePhone(query));
@@ -736,7 +860,7 @@ function CustomersView({
           <span>
             <span className="block font-bold">{customer.name}</span>
             <span className="mt-1 block text-sm text-zinc-500">
-              {formatCpf(customer.cpf)} · {formatPhone(customer.phone)}
+              {formatCpf(customer.cpf)} Â· {formatPhone(customer.phone)}
             </span>
           </span>
           <ChevronRight className="size-5 text-zinc-400" />
@@ -760,12 +884,23 @@ function CustomerProfile({
   onNewOrder: () => void;
   onOpenOrder: (orderId: string) => void;
 }) {
-  const { state } = useWorkshop();
+  const { state, deleteCustomer } = useWorkshop();
   if (!state) return null;
   const vehicles = getVehiclesForCustomer(state, customer.id);
   const orders = getOrdersForCustomer(state, customer.id);
   const pending = orders.filter((order) => order.paymentStatus !== "paid");
   const totalSpent = orders.reduce((sum, order) => sum + getOrderTotals(state, order.id).total, 0);
+
+  function handleDeleteCustomer() {
+    if (!window.confirm(`Excluir ${customer.name}? Cliente, veiculos e OS vinculadas sairao das listas principais.`)) return;
+    try {
+      deleteCustomer(customer.id);
+      toast.success("Cliente excluido.");
+      onBack();
+    } catch (error) {
+      toast.error(errorMessage(error));
+    }
+  }
 
   return (
     <div className="relative space-y-4">
@@ -778,7 +913,7 @@ function CustomerProfile({
           <div>
             <h2 className="text-2xl font-black tracking-tight">{customer.name}</h2>
             <p className="mt-1 text-sm text-zinc-500">
-              {formatCpf(customer.cpf)} · {formatPhone(customer.phone)}
+              {formatCpf(customer.cpf)} Â· {formatPhone(customer.phone)}
             </p>
             <p className="mt-1 text-sm text-zinc-500">{customer.email || "Cliente sem e-mail"}</p>
           </div>
@@ -791,6 +926,9 @@ function CustomerProfile({
         </div>
         <Button type="button" className="mt-4 w-full" onClick={onNewOrder}>
           <Plus /> Nova OS deste cliente
+        </Button>
+        <Button type="button" variant="danger" className="mt-2 w-full" onClick={handleDeleteCustomer}>
+          <Trash2 /> Excluir cliente
         </Button>
       </section>
 
@@ -830,7 +968,7 @@ function VehicleCard({ vehicle }: { vehicle: Vehicle }) {
             {vehicle.brand} {vehicle.model}
           </p>
           <p className="mt-1 text-sm text-zinc-500">
-            {formatPlate(vehicle.plate)} · {vehicle.year ?? "ano n/i"} · {vehicle.color ?? "cor n/i"}
+            {formatPlate(vehicle.plate)} - {vehicle.year ?? "ano n/i"} - {vehicle.color ?? "cor n/i"}
           </p>
         </div>
         <Badge variant={vehicle.lookupStatus === "found" ? "success" : "muted"}>{vehicle.lookupStatus === "found" ? "API" : "Manual"}</Badge>
@@ -883,7 +1021,7 @@ function OrdersView({
   if (!state) return null;
 
   const selectedOrder = state.orders.find((order) => order.id === selectedOrderId);
-  const orders = state.orders.filter((order) => statusFilter === "all" || order.status === statusFilter);
+  const orders = state.orders.filter((order) => !order.deletedAt && (statusFilter === "all" || order.status === statusFilter));
 
   if (selectedOrder) {
     return (
@@ -952,7 +1090,7 @@ function OrderListCard({
         <div>
           <p className="text-sm font-black">{order.number}</p>
           <p className="mt-1 text-sm text-zinc-500">
-            {customer?.name} · {vehicle?.model} {formatPlate(vehicle?.plate ?? "")}
+            {customer?.name} - {vehicle?.model} {formatPlate(vehicle?.plate ?? "")}
           </p>
         </div>
         <div className="flex flex-col items-end gap-1">
@@ -971,7 +1109,7 @@ function OrderListCard({
           </div>
         </div>
       ) : (
-        <div className="mt-3 grid grid-cols-3 gap-2">
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
           <MiniStat label="KM" value={order.currentMileage.toLocaleString("pt-BR")} />
           <MiniStat label="Total" value={formatCurrency(totals.total)} />
           <MiniStat label="Saldo" value={formatCurrency(totals.balance)} />
@@ -982,9 +1120,9 @@ function OrderListCard({
 }
 
 function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; onBack: () => void; onOpenCustomer: () => void }) {
-  const { state, advanceOrderStatus, updateOrder, createQuoteRevision, approveQuoteRevision } = useWorkshop();
+  const { state, advanceOrderStatus, updateOrder, deleteOrder, createQuoteRevision, approveQuoteRevision } = useWorkshop();
   const [actionSheetOpen, setActionSheetOpen] = useState(false);
-  const [actionPanel, setActionPanel] = useState<"menu" | "budget" | "status" | "info" | "photos" | "finish">("menu");
+  const [actionPanel, setActionPanel] = useState<"menu" | "budget" | "status" | "info" | "execution" | "photos" | "finish" | "delete">("menu");
   const [paymentSheetOpen, setPaymentSheetOpen] = useState(false);
   const [documentSheetOpen, setDocumentSheetOpen] = useState(false);
   const [executionDraft, setExecutionDraft] = useState({
@@ -1053,6 +1191,18 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
     }
   }
 
+  function handleDeleteOrder() {
+    if (!window.confirm(`Excluir ${order.number}? Essa OS sera removida das listas do sistema.`)) return;
+    try {
+      deleteOrder(order.id);
+      toast.success("OS excluida.");
+      setActionSheetOpen(false);
+      onBack();
+    } catch (error) {
+      toast.error(errorMessage(error));
+    }
+  }
+
   function sendWhatsApp() {
     if (!customer) return;
     const text = `Olá, ${customer.name}. Sua ${order.number} da Auto Mecânica Total Flex está em ${ORDER_STATUS_LABEL[order.status]}. Total: ${formatCurrency(totals.total)}. Saldo: ${formatCurrency(totals.balance)}.`;
@@ -1064,8 +1214,10 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
     { id: "budget" as const, label: "Adicionar ao orçamento", icon: ReceiptText },
     { id: "status" as const, label: "Status da OS", icon: ClipboardCheck },
     { id: "info" as const, label: "Data de entrega e informações", icon: Info },
+    { id: "execution" as const, label: "Diagnostico e execucao", icon: Wrench },
     { id: "photos" as const, label: "Fotos e Anexos", icon: Images },
     { id: "finish" as const, label: isAlreadyFinalized ? "Comprovante e documento" : "Finalizar Serviço", icon: CreditCard },
+    { id: "delete" as const, label: "Excluir OS", icon: Trash2 },
   ];
 
   return (
@@ -1085,7 +1237,7 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
             <p className="text-sm font-bold text-zinc-500">{customer?.name}</p>
             <h2 className="mt-1 text-2xl font-black tracking-tight">{order.number}</h2>
             <p className="mt-1 text-sm text-zinc-500">
-              {vehicle?.brand} {vehicle?.model} · {formatPlate(vehicle?.plate ?? "")}
+              {vehicle?.brand} {vehicle?.model} - {formatPlate(vehicle?.plate ?? "")}
             </p>
           </div>
           <div className="flex flex-col items-end gap-1">
@@ -1137,7 +1289,7 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
               <div>
                 <p className="text-sm font-bold">Revisão {latestQuote.version}</p>
                 <p className="text-xs text-zinc-500">
-                  {latestQuote.status} · {formatCurrency(latestQuote.total)}
+                  {latestQuote.status} Â· {formatCurrency(latestQuote.total)}
                 </p>
               </div>
               {latestQuote.status !== "approved" ? (
@@ -1252,7 +1404,7 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
         ) : null}
       </section>
 
-      <section className="space-y-3 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+      <section className="hidden space-y-3 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
         <h3 className="font-black">Diagnóstico e execução</h3>
         <Field label="Diagnóstico">
           <Textarea value={executionDraft.diagnosis} onChange={(event) => setExecutionDraft((current) => ({ ...current, diagnosis: event.target.value }))} />
@@ -1458,6 +1610,57 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
               </div>
             ) : null}
 
+            {actionPanel === "execution" ? (
+              <div className="space-y-4">
+                <Button type="button" variant="ghost" onClick={() => setActionPanel("menu")}>
+                  <ArrowLeft /> Acoes
+                </Button>
+                <Field label="Diagnostico">
+                  <Textarea value={executionDraft.diagnosis} onChange={(event) => setExecutionDraft((current) => ({ ...current, diagnosis: event.target.value }))} />
+                </Field>
+                <Field label="Recomendacoes do mecanico">
+                  <Textarea
+                    value={executionDraft.mechanicRecommendations}
+                    onChange={(event) => setExecutionDraft((current) => ({ ...current, mechanicRecommendations: event.target.value }))}
+                  />
+                </Field>
+                <Field label="Observacao para o cliente">
+                  <Textarea value={executionDraft.customerNotes} onChange={(event) => setExecutionDraft((current) => ({ ...current, customerNotes: event.target.value }))} />
+                </Field>
+                <Field label="Observacao interna">
+                  <Textarea value={executionDraft.internalNotes} onChange={(event) => setExecutionDraft((current) => ({ ...current, internalNotes: event.target.value }))} />
+                </Field>
+                <SignaturePad order={order} />
+                <Button type="button" className="w-full" onClick={handleSaveExecution}>
+                  <Check /> Salvar execucao
+                </Button>
+              </div>
+            ) : null}
+
+            {actionPanel === "delete" ? (
+              <div className="space-y-4">
+                <Button type="button" variant="ghost" onClick={() => setActionPanel("menu")}>
+                  <ArrowLeft /> Acoes
+                </Button>
+                <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="grid size-10 place-items-center rounded-full bg-rose-100 text-rose-700">
+                      <Trash2 className="size-5" />
+                    </div>
+                    <div>
+                      <p className="font-black text-rose-950">Excluir esta OS?</p>
+                      <p className="mt-1 text-sm font-medium text-rose-700">
+                        Ela sera marcada como excluida e removida das listas principais.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <Button type="button" variant="danger" className="w-full" onClick={handleDeleteOrder}>
+                  <Trash2 /> Confirmar exclusao
+                </Button>
+              </div>
+            ) : null}
+
             {actionPanel === "photos" ? (
               <PhotoPanel orderId={order.id} photos={photos} onBack={() => setActionPanel("menu")} />
             ) : null}
@@ -1514,7 +1717,6 @@ function PhotoUploader({ orderId }: { orderId: string }) {
 
 function PhotoPanel({ orderId, photos, onBack }: { orderId: string; photos: { id: string; dataUrl: string; label: string; createdAt: string }[]; onBack: () => void }) {
   const { removePhoto } = useWorkshop();
-  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   function handleDelete(photoId: string) {
     try {
@@ -2238,10 +2440,13 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
   const alreadyFinished = order?.status === "finished" || order?.status === "delivered";
 
   // Track original total so we know if user actually changed the amount
-  const originalTotal = totals ? totals.total : 0;
+  const currentFinalLabor = order?.finalLaborAmount ?? 0;
+  const originalTotal = totals ? Math.max(0, totals.total - currentFinalLabor) : 0;
 
   const [finalAmount, setFinalAmount] = useState(originalTotal);
   const [finalAmountInput, setFinalAmountInput] = useState(originalTotal.toFixed(2).replace(".", ","));
+  const [laborAmount, setLaborAmount] = useState(currentFinalLabor);
+  const [laborAmountInput, setLaborAmountInput] = useState(currentFinalLabor.toFixed(2).replace(".", ","));
   const [userChangedAmount, setUserChangedAmount] = useState(false);
   const [signature, setSignature] = useState("");
   const [document, setDocument] = useState<DocumentRecord | null>(null);
@@ -2258,9 +2463,10 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
   // Derived payment calculations
   const effectiveInstallments = showCustomInstallment && customInstallment ? Number(customInstallment) || 1 : creditInstallments;
   const cashReceivedNum = parseCurrencyInput(cashReceived);
-  const change = cashReceived ? Math.max(0, cashReceivedNum - finalAmount) : 0;
-  const remaining = cashReceived ? Math.max(0, finalAmount - cashReceivedNum) : finalAmount;
-  const installmentValue = effectiveInstallments > 0 ? finalAmount / effectiveInstallments : finalAmount;
+  const documentTotal = finalAmount + laborAmount;
+  const change = cashReceived ? Math.max(0, cashReceivedNum - documentTotal) : 0;
+  const remaining = cashReceived ? Math.max(0, documentTotal - cashReceivedNum) : documentTotal;
+  const installmentValue = effectiveInstallments > 0 ? documentTotal / effectiveInstallments : documentTotal;
 
   useEffect(() => {
     let cancelled = false;
@@ -2296,12 +2502,18 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
     setUserChangedAmount(Math.abs(parsed - originalTotal) >= 0.01);
   }
 
+  function handleLaborAmountChange(raw: string) {
+    setLaborAmountInput(raw);
+    setLaborAmount(parseCurrencyInput(raw));
+  }
+
   function finish() {
     try {
       const generated = finishService(
         currentOrder.id,
         {
-          finalAmount,
+          finalAmount: documentTotal,
+          laborAmount,
           mechanicSignatureDataUrl: signature || undefined,
           userChangedAmount,
         },
@@ -2375,7 +2587,7 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-sm font-bold">Documento v{latestDoc.version}</p>
-                  <p className="text-xs text-zinc-500">{formatDateTime(latestDoc.createdAt)} · {formatCurrency(latestDoc.total)}</p>
+                  <p className="text-xs text-zinc-500">{formatDateTime(latestDoc.createdAt)} Â· {formatCurrency(latestDoc.total)}</p>
                 </div>
                 <Badge variant="success">Gerado</Badge>
               </div>
@@ -2416,15 +2628,16 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
         <p className="mt-1 text-xs text-zinc-500">Confirme os valores antes de gerar o documento final.</p>
         <div className="mt-3 grid grid-cols-3 gap-2">
           <MiniStat label="Itens" value={getOrderItems(currentState, currentOrder.id).length} />
-          <MiniStat label="Total atual" value={formatCurrency(currentTotals.total)} />
+          <MiniStat label="Subtotal" value={formatCurrency(currentTotals.total)} />
+          <MiniStat label="M.O. final" value={formatCurrency(laborAmount)} />
           <MiniStat label="Saldo" value={formatCurrency(currentTotals.balance)} />
         </div>
       </div>
 
-      {/* Final amount — only show edit if not yet finalized */}
+      {/* Final amount - only show edit if not yet finalized */}
       {!document ? (
         <>
-          <Field label="Valor final (edite somente se precisar ajustar)">
+          <Field label="Valor do cliente sem M.O. final">
             <Input
               value={finalAmountInput}
               onChange={(event) => handleFinalAmountChange(event.target.value)}
@@ -2433,10 +2646,37 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
             />
             {userChangedAmount && (
               <p className="mt-1 text-xs font-semibold text-amber-600">
-                ⚠ Valor alterado — será adicionado um item de ajuste ao orçamento.
+                Valor alterado - sera adicionado um item de ajuste ao orcamento.
               </p>
             )}
           </Field>
+
+          <Field label="Mao de obra do mecanico">
+            <Input
+              value={laborAmountInput}
+              onChange={(event) => handleLaborAmountChange(event.target.value)}
+              inputMode="decimal"
+              placeholder="0,00"
+            />
+            <p className="mt-1 text-xs font-semibold text-zinc-500">
+              Entra como item de mao de obra, aparece no comprovante e soma no total.
+            </p>
+          </Field>
+
+          <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between text-sm font-semibold text-zinc-500">
+              <span>Subtotal</span>
+              <span>{formatCurrency(finalAmount)}</span>
+            </div>
+            <div className="mt-2 flex items-center justify-between text-sm font-semibold text-zinc-500">
+              <span>Mao de obra</span>
+              <span>{formatCurrency(laborAmount)}</span>
+            </div>
+            <div className="mt-3 flex items-center justify-between border-t border-zinc-100 pt-3">
+              <span className="text-sm font-black text-zinc-950">Total do comprovante</span>
+              <span className="text-xl font-black text-zinc-950">{formatCurrency(documentTotal)}</span>
+            </div>
+          </div>
 
           {/* Payment method */}
           <div className="space-y-3">
@@ -2458,7 +2698,7 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
               ))}
             </div>
 
-            {/* Cash / Pix — show change */}
+            {/* Cash / Pix - show change */}
             {(paymentMethod === "cash" || paymentMethod === "pix") && (
               <div className="space-y-3 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
                 <Field label="Valor recebido">
@@ -2485,7 +2725,7 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
                     ) : (
                       change === 0 && cashReceived ? (
                         <div className="col-span-2 rounded-lg bg-emerald-50 p-3 text-center">
-                          <p className="text-sm font-black text-emerald-900">✓ Pagamento exato!</p>
+                          <p className="text-sm font-black text-emerald-900">Pagamento exato!</p>
                         </div>
                       ) : null
                     )}
@@ -2494,7 +2734,7 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
               </div>
             )}
 
-            {/* Credit — show installments */}
+            {/* Credit - show installments */}
             {paymentMethod === "credit" && (
               <div className="space-y-3 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
                 <Field label="Número de parcelas">
@@ -2549,7 +2789,7 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
                   </div>
                   <div className="mt-1 flex items-center justify-between">
                     <span className="text-xs text-zinc-500">Total</span>
-                    <span className="text-sm font-bold">{formatCurrency(finalAmount)}</span>
+                    <span className="text-sm font-bold">{formatCurrency(documentTotal)}</span>
                   </div>
                 </div>
               </div>
@@ -2560,7 +2800,7 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
               <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-zinc-600">Total no débito</span>
-                  <span className="text-lg font-black">{formatCurrency(finalAmount)}</span>
+                  <span className="text-lg font-black">{formatCurrency(documentTotal)}</span>
                 </div>
               </div>
             )}
@@ -2684,8 +2924,14 @@ function MechanicSignatureCapture({ value, onChange }: { value: string; onChange
 
 function FinanceView({ onOpenOrder }: { onOpenOrder: (orderId: string) => void }) {
   const { state } = useWorkshop();
+  const [financeTab, setFinanceTab] = useState<FinanceTab>("extract");
+  const [selectedTransactionId, setSelectedTransactionId] = useState<string | null>(null);
+  const [paymentOrderId, setPaymentOrderId] = useState<string | null>(null);
+  const [documentOrderId, setDocumentOrderId] = useState<string | null>(null);
   if (!state) return null;
-  const totals = state.orders.reduce(
+  const activeOrders = state.orders.filter((order) => !order.deletedAt);
+
+  const totals = activeOrders.reduce(
     (acc, order) => {
       const orderTotals = getOrderTotals(state, order.id);
       acc.revenue += orderTotals.total;
@@ -2695,26 +2941,333 @@ function FinanceView({ onOpenOrder }: { onOpenOrder: (orderId: string) => void }
     },
     { revenue: 0, paid: 0, balance: 0 },
   );
-  const pending = state.orders.filter((order) => getOrderTotals(state, order.id).balance > 0);
+  const costs = state.orderItems.reduce((sum, item) => sum + item.cost * item.quantity, 0);
+  const net = totals.paid - costs;
+  const pending = activeOrders.filter((order) => getOrderTotals(state, order.id).balance > 0);
+  const paymentTransactions: FinanceTransaction[] = state.payments
+    .filter((payment) => payment.status === "confirmed" && activeOrders.some((order) => order.id === payment.orderId))
+    .map((payment) => {
+      const order = state.orders.find((entry) => entry.id === payment.orderId);
+      const customer = order ? getCustomer(state, order.customerId) : null;
+      return {
+        id: payment.id,
+        type: "Entrada",
+        title: "Recebimento " + (order?.number ?? "OS"),
+        detail: (customer?.name ?? "Cliente") + " - " + PAYMENT_METHOD_LABEL[payment.method],
+        amount: payment.amount,
+        date: payment.paidAt,
+        icon: ArrowDownLeft,
+        tone: "text-emerald-700 bg-emerald-50",
+        orderId: payment.orderId,
+      };
+    });
+  const costTransactions: FinanceTransaction[] = state.orderItems
+    .filter((item) => item.cost > 0 && activeOrders.some((order) => order.id === item.orderId))
+    .map((item) => ({
+      id: "cost-" + item.id,
+      type: "Saida",
+      title: item.description,
+      detail: "Custo de peca/servico",
+      amount: item.cost * item.quantity,
+      date: item.updatedAt,
+      icon: ArrowUpRight,
+      tone: "text-rose-700 bg-rose-50",
+      orderId: item.orderId,
+    }));
+  const pendingTransactions: FinanceTransaction[] = pending.map((order) => {
+    const customer = getCustomer(state, order.customerId);
+    const orderTotals = getOrderTotals(state, order.id);
+    return {
+      id: "pending-" + order.id,
+      type: "Pendente",
+      title: "Saldo " + order.number,
+      detail: customer?.name ?? "Cliente",
+      amount: orderTotals.balance,
+      date: order.updatedAt,
+      icon: Clock,
+      tone: "text-amber-700 bg-amber-50",
+      orderId: order.id,
+    };
+  });
+  const transactions = [...paymentTransactions, ...costTransactions, ...pendingTransactions]
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, 24);
+  const selectedTransaction = transactions.find((transaction) => transaction.id === selectedTransactionId) ?? null;
+  const receipts = state.documents
+    .filter((document) => document.status === "generated" && activeOrders.some((order) => order.id === document.orderId))
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
+      <section className="overflow-hidden rounded-3xl bg-zinc-950 p-5 text-white shadow-2xl shadow-zinc-950/20">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-bold uppercase text-white/50">Saldo disponivel</p>
+            <h2 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">{formatCurrency(totals.paid)}</h2>
+          </div>
+          <div className="grid size-11 place-items-center rounded-full bg-white/10 text-white ring-1 ring-white/10">
+            <Wallet className="size-5" />
+          </div>
+        </div>
+        <div className="mt-7 grid grid-cols-2 gap-3 text-sm">
+          <div className="rounded-2xl bg-white/8 p-3 ring-1 ring-white/10">
+            <p className="font-semibold text-white/50">Liquido estimado</p>
+            <p className="mt-1 text-lg font-black">{formatCurrency(net)}</p>
+          </div>
+          <div className="rounded-2xl bg-white/8 p-3 ring-1 ring-white/10">
+            <p className="font-semibold text-white/50">A receber</p>
+            <p className="mt-1 text-lg font-black">{formatCurrency(totals.balance)}</p>
+          </div>
+        </div>
+      </section>
+
       <section className="grid grid-cols-3 gap-2">
-        <MetricCard label="Faturado" value={formatCurrency(totals.revenue)} icon={CircleDollarSign} tone="emerald" />
-        <MetricCard label="Recebido" value={formatCurrency(totals.paid)} icon={ReceiptText} tone="sky" />
-        <MetricCard label="Aberto" value={formatCurrency(totals.balance)} icon={Clock} tone="amber" />
+        <BankMetric label="Recebido" value={formatCurrency(totals.paid)} icon={Landmark} tone="emerald" />
+        <BankMetric label="Pendente" value={formatCurrency(totals.balance)} icon={Clock} tone="amber" />
+        <BankMetric label="Faturado" value={formatCurrency(totals.revenue)} icon={ReceiptText} tone="sky" />
       </section>
+
+      <section className="grid grid-cols-3 gap-1 rounded-2xl border border-zinc-100 bg-white p-1 shadow-sm">
+        <FinanceSegmentButton active={financeTab === "extract"} icon={ArrowDownLeft} label="Extrato" onClick={() => setFinanceTab("extract")} />
+        <FinanceSegmentButton active={financeTab === "pending"} icon={Clock} label="Pendentes" onClick={() => setFinanceTab("pending")} />
+        <FinanceSegmentButton active={financeTab === "receipts"} icon={ReceiptText} label="Comprovantes" onClick={() => setFinanceTab("receipts")} />
+      </section>
+
+      {financeTab === "extract" ? (
       <section className="space-y-3">
-        <h2 className="text-base font-black">Saldos pendentes</h2>
-        {pending.map((order) => (
-          <OrderListCard key={order.id} order={order} onOpenOrder={onOpenOrder} />
-        ))}
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-black">Extrato</h2>
+          <Badge variant="muted">{transactions.length} logs</Badge>
+        </div>
+        <div className="overflow-hidden rounded-2xl border border-zinc-100 bg-white shadow-sm">
+          {transactions.map((transaction) => {
+            const Icon = transaction.icon;
+            const isOut = transaction.type === "Saida";
+            return (
+              <button
+                key={transaction.id}
+                type="button"
+                onClick={() => setSelectedTransactionId(transaction.id)}
+                className="flex w-full items-center gap-3 border-b border-zinc-100 p-4 text-left transition last:border-0 hover:bg-zinc-50"
+              >
+                <span className={"grid size-11 shrink-0 place-items-center rounded-full " + transaction.tone}>
+                  <Icon className="size-5" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-black text-zinc-950">{transaction.title}</span>
+                  <span className="mt-0.5 block truncate text-xs font-semibold text-zinc-500">{transaction.detail}</span>
+                </span>
+                <span className="text-right">
+                  <span className={"block text-sm font-black " + (isOut ? "text-rose-600" : "text-zinc-950")}>
+                    {isOut ? "-" : "+"}{formatCurrency(transaction.amount)}
+                  </span>
+                  <span className="mt-0.5 block text-[11px] font-semibold text-zinc-400">{formatDate(transaction.date)}</span>
+                </span>
+              </button>
+            );
+          })}
+          {!transactions.length ? (
+            <div className="p-4">
+              <EmptyState icon={CircleDollarSign} title="Sem movimentacao" text="Pagamentos, custos e saldos pendentes aparecem aqui quando houver OS." />
+            </div>
+          ) : null}
+        </div>
       </section>
+      ) : null}
+
+      {financeTab === "pending" ? (
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-black">Saldos pendentes</h2>
+          <Badge variant="warning">{pending.length}</Badge>
+        </div>
+        {pending.map((order) => (
+          <button
+            key={order.id}
+            type="button"
+            onClick={() => setPaymentOrderId(order.id)}
+            className="flex w-full items-center justify-between gap-3 rounded-2xl border border-zinc-100 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+          >
+            <span>
+              <span className="block text-sm font-black">{order.number}</span>
+              <span className="mt-1 block text-xs font-semibold text-zinc-500">{getCustomer(state, order.customerId)?.name ?? "Cliente"}</span>
+            </span>
+            <span className="text-right">
+              <span className="block text-sm font-black text-amber-700">{formatCurrency(getOrderTotals(state, order.id).balance)}</span>
+              <span className="mt-1 block text-[11px] font-bold uppercase text-zinc-400">Receber</span>
+            </span>
+          </button>
+        ))}
+        {!pending.length ? (
+          <EmptyState icon={Check} title="Nada pendente" text="Todas as ordens com valor fechado aparecem como quitadas." />
+        ) : null}
+      </section>
+      ) : null}
+
+      {financeTab === "receipts" ? (
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-black">Comprovantes</h2>
+          <Badge variant="info">{receipts.length}</Badge>
+        </div>
+        <div className="space-y-2">
+          {receipts.map((document) => {
+            const order = state.orders.find((entry) => entry.id === document.orderId);
+            return (
+              <button
+                key={document.id}
+                type="button"
+                onClick={() => setDocumentOrderId(document.orderId)}
+                className="flex w-full items-center gap-3 rounded-2xl border border-zinc-100 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+              >
+                <span className="grid size-11 place-items-center rounded-full bg-sky-50 text-sky-700">
+                  <ReceiptText className="size-5" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-black">Comprovante {order?.number ?? "OS"}</span>
+                  <span className="mt-0.5 block truncate text-xs font-semibold text-zinc-500">Versao {document.version} - {formatDateTime(document.createdAt)}</span>
+                </span>
+                <span className="text-sm font-black">{formatCurrency(document.total)}</span>
+              </button>
+            );
+          })}
+          {!receipts.length ? (
+            <EmptyState icon={ReceiptText} title="Sem comprovantes" text="Finalize uma OS ou gere um documento para ele aparecer aqui." />
+          ) : null}
+        </div>
+      </section>
+      ) : null}
+
+      <FinanceTransactionSheet
+        transaction={selectedTransaction}
+        onOpenChange={(open) => {
+          if (!open) setSelectedTransactionId(null);
+        }}
+        onOpenOrder={onOpenOrder}
+        onOpenPayment={setPaymentOrderId}
+        onOpenDocument={setDocumentOrderId}
+      />
+      {paymentOrderId ? <PaymentSheet open={Boolean(paymentOrderId)} onOpenChange={(open) => !open && setPaymentOrderId(null)} orderId={paymentOrderId} /> : null}
+      {documentOrderId ? <DocumentSheet open={Boolean(documentOrderId)} onOpenChange={(open) => !open && setDocumentOrderId(null)} orderId={documentOrderId} /> : null}
     </div>
   );
 }
 
-function HistoryView({ onOpenOrder, onOpenCustomer }: { onOpenOrder: (orderId: string) => void; onOpenCustomer: (customerId: string) => void }) {
+function BankMetric({
+  label,
+  value,
+  icon: Icon,
+  tone,
+}: {
+  label: string;
+  value: string;
+  icon: typeof Home;
+  tone: "sky" | "amber" | "emerald";
+}) {
+  const toneClass = {
+    sky: "bg-sky-50 text-sky-700 ring-sky-100",
+    amber: "bg-amber-50 text-amber-700 ring-amber-100",
+    emerald: "bg-emerald-50 text-emerald-700 ring-emerald-100",
+  }[tone];
+
+  return (
+    <div className="min-h-28 rounded-2xl border border-zinc-100 bg-white p-3 shadow-sm">
+      <div className={"grid size-9 place-items-center rounded-full ring-1 " + toneClass}>
+        <Icon className="size-4" />
+      </div>
+      <p className="mt-3 truncate text-sm font-black tracking-tight text-zinc-950 sm:text-base">{value}</p>
+      <p className="mt-1 text-[11px] font-black uppercase text-zinc-400">{label}</p>
+    </div>
+  );
+}
+
+function FinanceSegmentButton({
+  active,
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  icon: typeof Home;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex min-h-11 items-center justify-center gap-2 rounded-xl px-2 text-xs font-black transition ${
+        active ? "bg-zinc-950 text-white shadow-sm" : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-950"
+      }`}
+    >
+      <Icon className="size-4" />
+      <span className="truncate">{label}</span>
+    </button>
+  );
+}
+
+function FinanceTransactionSheet({
+  transaction,
+  onOpenChange,
+  onOpenOrder,
+  onOpenPayment,
+  onOpenDocument,
+}: {
+  transaction: FinanceTransaction | null;
+  onOpenChange: (open: boolean) => void;
+  onOpenOrder: (orderId: string) => void;
+  onOpenPayment: (orderId: string) => void;
+  onOpenDocument: (orderId: string) => void;
+}) {
+  const { state } = useWorkshop();
+  const order = transaction && state ? state.orders.find((entry) => entry.id === transaction.orderId) : null;
+  const customer = order && state ? getCustomer(state, order.customerId) : null;
+  const isOut = transaction?.type === "Saida";
+
+  return (
+    <Sheet open={Boolean(transaction)} onOpenChange={onOpenChange}>
+      <SheetContent>
+        <SheetHeader>
+          <SheetTitle>{transaction?.type ?? "Lancamento"}</SheetTitle>
+          <SheetDescription>Detalhe financeiro do valor selecionado no extrato.</SheetDescription>
+        </SheetHeader>
+        {transaction ? (
+          <div className="space-y-4 px-5 pb-6">
+            <div className="rounded-3xl bg-zinc-950 p-5 text-white">
+              <p className="text-xs font-bold uppercase text-white/50">{transaction.title}</p>
+              <p className={`mt-3 text-3xl font-black ${isOut ? "text-rose-200" : "text-white"}`}>
+                {isOut ? "-" : "+"}{formatCurrency(transaction.amount)}
+              </p>
+              <p className="mt-2 text-sm font-semibold text-white/60">{formatDateTime(transaction.date)}</p>
+            </div>
+            <div className="rounded-2xl border border-zinc-100 bg-white p-4 shadow-sm">
+              <InfoRow label="Descricao" value={transaction.detail} />
+              <InfoRow label="OS" value={order?.number ?? "Nao vinculada"} />
+              <InfoRow label="Cliente" value={customer?.name ?? "Cliente"} />
+              <InfoRow label="Tipo" value={transaction.type} />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {transaction.type === "Pendente" ? (
+                <Button type="button" onClick={() => { onOpenChange(false); onOpenPayment(transaction.orderId); }}>
+                  <CreditCard /> Receber
+                </Button>
+              ) : (
+                <Button type="button" onClick={() => { onOpenChange(false); onOpenDocument(transaction.orderId); }}>
+                  <ReceiptText /> Comprovante
+                </Button>
+              )}
+              <Button type="button" variant="outline" onClick={() => { onOpenChange(false); onOpenOrder(transaction.orderId); }}>
+                <ClipboardCheck /> Ver OS
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function HistoryView({ onOpenOrder }: { onOpenOrder: (orderId: string) => void }) {
   const { state } = useWorkshop();
   const [filter, setFilter] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -2725,10 +3278,9 @@ function HistoryView({ onOpenOrder, onOpenCustomer }: { onOpenOrder: (orderId: s
   const normalizedQuery = filter.trim().toLowerCase();
 
   const filtered = state.orders.filter((order) => {
+    if (order.deletedAt) return false;
     const customer = getCustomer(state, order.customerId);
     const vehicle = getVehicle(state, order.vehicleId);
-    const totals = getOrderTotals(state, order.id);
-
     // Status filter
     if (statusFilter === "finished" && order.status !== "finished") return false;
     if (statusFilter === "delivered" && order.status !== "delivered") return false;
@@ -2829,10 +3381,10 @@ function HistoryView({ onOpenOrder, onOpenCustomer }: { onOpenOrder: (orderId: s
                 <div>
                   <p className="text-sm font-black">{order.number}</p>
                   <p className="mt-1 text-sm text-zinc-500">
-                    {customer?.name} · {vehicle?.model} {formatPlate(vehicle?.plate ?? "")}
+                    {customer?.name} - {vehicle?.model} {formatPlate(vehicle?.plate ?? "")}
                   </p>
                   <p className="mt-1 text-xs text-zinc-400">
-                    {formatDate(order.createdAt)} · {formatCpf(customer?.cpf ?? "")}
+                    {formatDate(order.createdAt)} - {formatCpf(customer?.cpf ?? "")}
                   </p>
                 </div>
                 <div className="flex flex-col items-end gap-1">
@@ -2858,12 +3410,12 @@ function HistoryView({ onOpenOrder, onOpenCustomer }: { onOpenOrder: (orderId: s
 }
 
 function SettingsView() {
-  const { state, currentUser, resetDemoData, syncStatus, forceSync } = useWorkshop();
+  const { state, currentUser, syncStatus, forceSync } = useWorkshop();
   const [notifPermission, setNotifPermission] = useState<PermissionState>("unsupported");
-  const [setupLoading, setSetupLoading] = useState(false);
 
   useEffect(() => {
-    setNotifPermission(getNotificationPermission());
+    const id = window.setTimeout(() => setNotifPermission(getNotificationPermission()), 0);
+    return () => window.clearTimeout(id);
   }, []);
 
   async function handleToggleNotifications() {
@@ -2876,27 +3428,6 @@ function SettingsView() {
     }
   }
 
-  async function handleSetup() {
-    setSetupLoading(true);
-    try {
-      const res = await fetch("/api/workshop/setup", { method: "POST" });
-      const body = await res.json();
-      if (body?.ok) {
-        toast.success("Tabela criada no Supabase!");
-        // Force sync after setup
-        await forceSync();
-      } else if (body?.sql) {
-        toast.error("Execute o SQL manualmente no Supabase.");
-      } else {
-        toast.error(body?.message || "Erro na configuração.");
-      }
-    } catch {
-      toast.error("Erro ao configurar Supabase.");
-    } finally {
-      setSetupLoading(false);
-    }
-  }
-
   if (!state || !currentUser) return null;
   const supabaseConfigured = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
   const openReminders = state.reminders.filter((r) => r.status === "open" && r.dueDate);
@@ -2904,9 +3435,8 @@ function SettingsView() {
   const syncLabel = {
     idle: "Aguardando",
     syncing: "Sincronizando...",
-    synced: "Sincronizado ✓",
+    synced: "Sincronizado",
     error: "Erro ao sincronizar",
-    local_only: "Somente local",
     table_missing: "Tabela não existe",
   }[syncStatus];
   const syncVariant = {
@@ -2914,7 +3444,6 @@ function SettingsView() {
     syncing: "info" as const,
     synced: "success" as const,
     error: "danger" as const,
-    local_only: "warning" as const,
     table_missing: "danger" as const,
   }[syncStatus];
 
@@ -2941,15 +3470,15 @@ function SettingsView() {
         {supabaseConfigured && syncStatus === "synced" && (
           <div className="mt-3 rounded-lg bg-emerald-50 p-3">
             <p className="text-sm font-semibold text-emerald-700">
-              ✓ Todos os dados estão sincronizados com o banco de dados.
+              Todos os dados estao sincronizados com o banco de dados.
             </p>
           </div>
         )}
-        {supabaseConfigured && (syncStatus === "local_only" || syncStatus === "table_missing") && (
+        {supabaseConfigured && syncStatus === "table_missing" && (
           <div className="mt-3 space-y-3">
             <div className="rounded-lg bg-amber-50 p-3">
               <p className="text-sm font-semibold text-amber-700">
-                ⚠ Tabela workshop_app_snapshots não existe no Supabase.
+                Tabela workshop_app_snapshots nao existe no Supabase.
               </p>
               <p className="mt-1 text-xs text-amber-600">
                 Abra o SQL Editor no Supabase e execute o SQLFINAL.sql do repositório.
@@ -2972,7 +3501,7 @@ function SettingsView() {
             </Button>
           </div>
         )}
-        {supabaseConfigured && syncStatus !== "local_only" && syncStatus !== "table_missing" && syncStatus !== "error" && (
+        {supabaseConfigured && syncStatus !== "table_missing" && syncStatus !== "error" && (
           <Button type="button" variant="outline" className="mt-3 w-full" onClick={forceSync}>
             Sincronizar agora
           </Button>
@@ -3006,13 +3535,13 @@ function SettingsView() {
           </p>
         ) : (
           <Button type="button" className="mt-3 w-full" onClick={handleToggleNotifications}>
-            {notifPermission === "granted" ? "Notificações já ativas ✓" : "Ativar notificações"}
+            {notifPermission === "granted" ? "Notificações já ativas" : "Ativar notificações"}
           </Button>
         )}
         {openReminders.length > 0 && notifPermission === "granted" && (
           <div className="mt-3 rounded-lg bg-zinc-50 p-3">
             <p className="text-xs font-semibold text-zinc-500">
-              {openReminders.length} lembretes ativos — notificações disparam quando faltam ≤ 3 dias
+              {openReminders.length} lembretes ativos - notificações disparam quando faltam {"<= "}3 dias
             </p>
           </div>
         )}
@@ -3045,9 +3574,6 @@ function SettingsView() {
         </div>
       </section>
 
-      <Button type="button" variant="danger" className="w-full" onClick={resetDemoData}>
-        Restaurar base local
-      </Button>
     </div>
   );
 }

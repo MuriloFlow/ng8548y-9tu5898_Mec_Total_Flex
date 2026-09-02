@@ -1,13 +1,11 @@
 /* ==========================================================
-   Total Flex – Service Worker
+   Total Flex - Service Worker
    Handles reminder notifications in the background.
    ========================================================== */
 
 const CACHE_NAME = "tf-reminders-v1";
-const CHECK_INTERVAL = 30 * 60 * 1000; // 30 minutes
-
-// Install – activate immediately
-self.addEventListener("install", (event) => {
+// Install - activate immediately
+self.addEventListener("install", () => {
   self.skipWaiting();
 });
 
@@ -70,7 +68,6 @@ async function checkRemindersFromStorage() {
 
 function checkReminders(reminders, customers, vehicles) {
   const now = new Date();
-  const notifiedKey = "tf-notified-reminders";
   let notified = [];
   try {
     // Read from IndexedDB or fallback
