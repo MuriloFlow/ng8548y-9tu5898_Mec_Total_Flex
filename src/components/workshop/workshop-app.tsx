@@ -115,7 +115,8 @@ import type {
   VehicleLookupResult,
   WorkshopState,
 } from "@/lib/workshop/types";
-import { lookupVehicleByPlate, lookupVehicleImage } from "@/lib/workshop/vehicle-lookup";
+import { lookupVehicleByPlate } from "@/lib/workshop/vehicle-lookup";
+import { getVehicleCategoryImageFallback, localImageForCategory, resolveVehicleImageUrl } from "@/lib/workshop/vehicle-image";
 import {
   checkAndNotifyReminders,
   getNotificationPermission,
@@ -286,7 +287,7 @@ function DatabaseSkeleton({ status }: { status: string }) {
     status === "table_missing"
       ? "Aguardando SQLFINAL.sql no Supabase"
       : status === "error"
-        ? "Tentando reconectar ao banco"
+        ? "Sem conexão com o Supabase — verifique .env e se o projeto não está pausado"
         : "Carregando dados do Supabase";
 
   return (
@@ -968,28 +969,34 @@ function VehicleCard({ vehicle }: { vehicle: Vehicle }) {
 }
 
 function VehicleVisual({ vehicle }: { vehicle: Vehicle }) {
-  if (vehicle.imageUrl) {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={vehicle.imageUrl}
-        alt={`${vehicle.brand} ${vehicle.model}`}
-        className="h-32 w-full rounded-lg border border-zinc-200 bg-zinc-50 object-contain p-2"
-      />
-    );
-  }
+  const imageSrc = resolveVehicleImageUrl(vehicle);
+  const fallbackSrc = getVehicleCategoryImageFallback(vehicle.category);
 
   return (
-    <div className="relative h-32 overflow-hidden rounded-lg border border-zinc-200 bg-[linear-gradient(135deg,#fafafa,#eef8f5_48%,#fff7ed)]">
-      <div className="absolute left-4 top-4 rounded-full bg-white/80 px-3 py-1 text-xs font-bold text-zinc-700 shadow-sm">{vehicle.category}</div>
-      <Car className="absolute left-1/2 top-1/2 size-20 -translate-x-1/2 -translate-y-1/2 text-zinc-900/15" />
-      <div className="absolute bottom-4 left-5 right-5 flex items-end justify-between gap-3">
+    <div className="relative overflow-hidden rounded-lg border border-zinc-200 bg-[linear-gradient(135deg,#fafafa,#eef8f5_48%,#fff7ed)]">
+      <div className="absolute left-4 top-4 z-10 rounded-full bg-white/80 px-3 py-1 text-xs font-bold text-zinc-700 shadow-sm">
+        {vehicle.category === "motorcycle" ? "Moto" : vehicle.category === "truck" || vehicle.category === "van" ? "Utilitário" : "Carro"}
+      </div>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={imageSrc}
+        alt={`${vehicle.brand} ${vehicle.model}`}
+        className="h-36 w-full object-contain p-4"
+        onError={(event) => {
+          if (event.currentTarget.src.endsWith(".svg")) return;
+          event.currentTarget.src = fallbackSrc;
+        }}
+      />
+      <div className="absolute bottom-0 left-0 right-0 flex items-end justify-between gap-3 bg-gradient-to-t from-white/95 to-transparent px-5 pb-4 pt-8">
         <div>
           <p className="text-sm font-black text-zinc-950">{vehicle.brand}</p>
           <p className="text-xs font-semibold text-zinc-500">{vehicle.model}</p>
         </div>
         <div className="flex items-center gap-2 rounded-full bg-white px-3 py-2 text-xs font-bold text-zinc-700 shadow-sm">
-          <span className="size-3 rounded-full border border-zinc-300 bg-white" style={{ backgroundColor: vehicle.color?.toLowerCase().includes("branco") ? "#ffffff" : "#d4d4d8" }} />
+          <span
+            className="size-3 rounded-full border border-zinc-300 bg-white"
+            style={{ backgroundColor: vehicle.color?.toLowerCase().includes("branco") ? "#ffffff" : "#d4d4d8" }}
+          />
           {vehicle.color || "cor"}
         </div>
       </div>
@@ -2142,26 +2149,11 @@ function OrderFlowSheet({
   async function handleVehicle(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
-      const imageUrl =
-        lookup?.status === "found" && lookup.imageUrl
-          ? lookup.imageUrl
-          : await lookupVehicleImage(String(draft.brand), String(draft.model), String(draft.year));
+      const category = String(draft.category) as Vehicle["category"];
       const lookupForSave =
         lookup?.status === "found"
-          ? { ...lookup, imageUrl: lookup.imageUrl ?? imageUrl }
-          : imageUrl
-            ? ({
-                status: "found",
-                brand: String(draft.brand),
-                model: String(draft.model),
-                version: String(draft.version) || undefined,
-                year: draft.year ? Number(draft.year) : undefined,
-                color: String(draft.color) || undefined,
-                category: String(draft.category) as Vehicle["category"],
-                provider: "Wikimedia Commons",
-                imageUrl,
-              } satisfies VehicleLookupResult)
-            : lookup;
+          ? { ...lookup, imageUrl: localImageForCategory(category) }
+          : undefined;
       const result = createOrUpdateVehicle(
         String(draft.customerId),
         {
@@ -2171,7 +2163,7 @@ function OrderFlowSheet({
           version: String(draft.version),
           year: draft.year ? Number(draft.year) : undefined,
           color: String(draft.color),
-          category: String(draft.category) as Vehicle["category"],
+          category,
         },
         lookupForSave ?? undefined,
       );

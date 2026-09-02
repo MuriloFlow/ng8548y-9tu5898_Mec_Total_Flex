@@ -14,6 +14,7 @@ import { ORDER_STATUS_SEQUENCE } from "./constants";
 import { newId } from "./format";
 import { hasPermission, type Permission } from "./permissions";
 import { createSeedState } from "./seed";
+import { localImageForCategory } from "./vehicle-image";
 import {
   calculateItemsTotals,
   findCustomerByCpf,
@@ -345,14 +346,18 @@ async function loadStateFromSupabaseUntilReady() {
         ...snapshot,
         state: null,
         ready: false,
-        syncStatus: body.source === "table_missing" || body.reason === "table_missing" ? "table_missing" : "error",
+        syncStatus:
+          body.reason === "table_missing" || body.source === "table_missing"
+            ? "table_missing"
+            : "error",
       });
     } catch (err) {
       lastSyncError = err instanceof Error ? err.message : String(err);
       setWorkshopSnapshot({ ...snapshot, state: null, ready: false, syncStatus: "error" });
     }
 
-    await wait(2500);
+    const retryMs = lastSyncError.includes("conectar") || lastSyncError.includes("connection") ? 5000 : 2500;
+    await wait(retryMs);
   }
 }
 
@@ -662,7 +667,7 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
             category: parsed.category,
             lookupStatus: lookup?.status === "found" ? "found" : duplicate.lookupStatus,
             lookupProvider: lookup?.status === "found" ? lookup.provider : duplicate.lookupProvider,
-            imageUrl: lookup?.status === "found" ? lookup.imageUrl : duplicate.imageUrl,
+            imageUrl: localImageForCategory(parsed.category),
             updatedAt: now,
           });
           pushAudit(draft, userId, "vehicle", duplicate.id, "updated", `Veículo ${duplicate.plate} atualizado.`, before, duplicate);
@@ -681,7 +686,7 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
           category: parsed.category,
           lookupStatus: lookup?.status === "found" ? "found" : "manual",
           lookupProvider: lookup?.status === "found" ? lookup.provider : "Cadastro manual",
-          imageUrl: lookup?.status === "found" ? lookup.imageUrl : undefined,
+          imageUrl: localImageForCategory(parsed.category),
           createdAt: now,
           updatedAt: now,
         };

@@ -28,12 +28,16 @@ async function pruneOrphans(
   companyIdValue: string,
   keepIds: string[],
 ): Promise<void> {
-  const { data, error } = await supabase.from(table).select("id").eq("company_id", companyIdValue);
-  if (error || !data?.length) return;
-  const remove = data.map((row) => row.id as string).filter((id) => !keepIds.includes(id));
-  if (!remove.length) return;
-  const { error: deleteError } = await supabase.from(table).delete().in("id", remove);
-  if (deleteError) throw new Error(`${table}_prune: ${deleteError.message}`);
+  try {
+    const { data, error } = await supabase.from(table).select("id").eq("company_id", companyIdValue);
+    if (error || !data?.length) return;
+    const remove = data.map((row) => row.id as string).filter((id) => !keepIds.includes(id));
+    if (!remove.length) return;
+    const { error: deleteError } = await supabase.from(table).delete().in("id", remove);
+    if (deleteError) throw new Error(`${table}_prune: ${deleteError.message}`);
+  } catch {
+    return;
+  }
 }
 
 /** Mirror every snapshot entity into normalized Supabase tables (including OS photos). */

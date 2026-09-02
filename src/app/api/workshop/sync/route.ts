@@ -26,6 +26,32 @@ function missingTable(error: SupabaseError) {
   return error.code === "42P01" || message.includes("does not exist") || message.includes("relation") || message.includes("not found");
 }
 
+function isConnectionError(error: SupabaseError | Error) {
+  const message = (error.message ?? "").toLowerCase();
+  return (
+    message.includes("fetch failed") ||
+    message.includes("network") ||
+    message.includes("timeout") ||
+    message.includes("econnrefused") ||
+    message.includes("enotfound") ||
+    message.includes("abort")
+  );
+}
+
+function mapSupabaseReadError(error: SupabaseError) {
+  if (missingTable(error)) {
+    return serverError("Tabela workshop_app_snapshots nao existe. Execute SQLFINAL.sql no Supabase.", 503, "table_missing");
+  }
+  if (isConnectionError(error)) {
+    return serverError(
+      "Nao foi possivel conectar ao Supabase. Verifique NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY e se o projeto nao esta pausado.",
+      503,
+      "connection_failed",
+    );
+  }
+  return serverError(`Erro Supabase: ${error.message}`, 500, "read_failed");
+}
+
 function validState(value: unknown): value is WorkshopState {
   if (!value || typeof value !== "object") return false;
   const state = value as Partial<WorkshopState>;
@@ -51,18 +77,18 @@ async function readSnapshot() {
     };
   }
 
-  const { data, error } = await supabase.from(TABLE).select("state, updated_at").eq("id", ROW_ID).maybeSingle<SnapshotRow>();
-  if (error) {
-    return {
-      response: serverError(
-        missingTable(error) ? "Tabela workshop_app_snapshots nao existe. Execute SQLFINAL.sql no Supabase." : `Erro Supabase: ${error.message}`,
-        missingTable(error) ? 503 : 500,
-        missingTable(error) ? "table_missing" : "read_failed",
-      ),
-    };
+  let lastError: SupabaseError | null = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const { data, error } = await supabase.from(TABLE).select("state, updated_at").eq("id", ROW_ID).maybeSingle<SnapshotRow>();
+    if (!error) {
+      return { supabase, row: data ?? null };
+    }
+    lastError = error;
+    if (!isConnectionError(error) || attempt === 3) break;
+    await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
   }
 
-  return { supabase, row: data ?? null };
+  return { response: mapSupabaseReadError(lastError ?? { message: "Erro desconhecido" }) };
 }
 
 async function writeSnapshot(state: WorkshopState, updatedBy: string) {
@@ -103,7 +129,11 @@ async function writeSnapshot(state: WorkshopState, updatedBy: string) {
     };
   }
 
-  const entitySync = await syncEntitiesToTables(supabase, saved.state);
+  const entitySync = await syncEntitiesToTables(supabase, saved.state).catch((err) => ({
+    ok: false as const,
+    error: err instanceof Error ? err.message : String(err),
+    tables: [] as string[],
+  }));
 
   return {
     state: saved.state,
@@ -131,6 +161,13 @@ export async function GET() {
       source: "supabase",
     });
   } catch (error) {
+    if (error instanceof Error && isConnectionError(error)) {
+      return serverError(
+        "Nao foi possivel conectar ao Supabase. Verifique URL, service role key e conexao com a internet.",
+        503,
+        "connection_failed",
+      );
+    }
     return serverError(error instanceof Error ? error.message : String(error), 500, "exception");
   }
 }
@@ -154,6 +191,13 @@ export async function PUT(request: Request) {
       entitySync: saved.entitySync,
     });
   } catch (error) {
+    if (error instanceof Error && isConnectionError(error)) {
+      return serverError(
+        "Nao foi possivel conectar ao Supabase. Verifique URL, service role key e conexao com a internet.",
+        503,
+        "connection_failed",
+      );
+    }
     return serverError(error instanceof Error ? error.message : String(error), 500, "exception");
   }
 }

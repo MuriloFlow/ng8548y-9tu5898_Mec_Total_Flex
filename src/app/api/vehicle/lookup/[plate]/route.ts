@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isLikelyPlate, normalizePlate } from "@/lib/workshop/format";
+import { localImageForCategory } from "@/lib/workshop/vehicle-image";
 import type { Vehicle, VehicleLookupResult } from "@/lib/workshop/types";
 
 type RouteContext = {
@@ -10,6 +11,7 @@ type ApiRecord = Record<string, unknown>;
 type ProviderResult = VehicleLookupResult & { provider: string };
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 function readText(value: unknown) {
   if (typeof value === "string") return value.trim();
@@ -22,87 +24,110 @@ function readNumber(value: unknown) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-function readNestedText(payload: ApiRecord, key: string) {
-  const extra = payload.extra;
-  if (!extra || typeof extra !== "object") return "";
-  return readText((extra as ApiRecord)[key]);
+function readNested(payload: ApiRecord, ...keys: string[]) {
+  let current: unknown = payload;
+  for (const key of keys) {
+    if (!current || typeof current !== "object") return "";
+    current = (current as ApiRecord)[key];
+  }
+  return readText(current);
 }
 
-function inferCategory(payload: ApiRecord): Vehicle["category"] {
+function inferCategory(payload: ApiRecord, brand: string, model: string): Vehicle["category"] {
   const text = [
     readText(payload.tipo),
     readText(payload.tipo_veiculo),
     readText(payload.segmento),
     readText(payload.especie),
-    readNestedText(payload, "tipo_veiculo"),
-    readNestedText(payload, "segmento"),
-    readNestedText(payload, "especie"),
+    readText(payload.vehicleType),
+    readNested(payload, "extra", "tipo_veiculo"),
+    readNested(payload, "extra", "segmento"),
+    brand,
+    model,
   ]
     .join(" ")
     .normalize("NFD")
     .replace(/\p{Diacritic}/gu, "")
     .toLowerCase();
 
-  if (text.includes("moto")) return "motorcycle";
-  if (text.includes("caminh") || text.includes("truck")) return "truck";
-  if (text.includes("van") || text.includes("utilitario")) return "van";
+  if (text.includes("moto") || text.includes("motocic")) return "motorcycle";
+  if (text.includes("caminh") || text.includes("truck") || text.includes("onibus")) return "truck";
+  if (text.includes("van") || text.includes("utilit") || text.includes("furg")) return "van";
   return "car";
 }
 
 function cleanBrandModel(brandValue: string, modelValue: string) {
   const composite = modelValue || brandValue;
-  const [left, right] = composite.includes("/") ? composite.split("/", 2).map((part) => part.trim()) : ["", ""];
-  const brand = brandValue && brandValue !== modelValue ? brandValue : left || brandValue;
-  let model = right || modelValue;
+  const slashParts = composite.includes("/") ? composite.split("/").map((part) => part.trim()) : [];
+  let brand = brandValue;
+  let model = modelValue;
 
-  if (brand && model.toLowerCase().startsWith(`${brand.toLowerCase()}/`)) {
-    model = model.slice(brand.length + 1).trim();
+  if (slashParts.length >= 2) {
+    brand = slashParts[0] || brandValue;
+    model = slashParts.slice(1).join(" ") || modelValue;
+  } else if (brand && model.toLowerCase().startsWith(`${brand.toLowerCase()} `)) {
+    model = model.slice(brand.length).trim();
+  } else if (!brand && composite) {
+    brand = composite.split(" ")[0] ?? composite;
+    model = composite.split(" ").slice(1).join(" ") || composite;
   }
 
-  return { brand, model };
+  return { brand: brand.trim(), model: model.trim() };
 }
 
-function pickBestImage(payload: ApiRecord) {
-  const imageUrl = readText(payload.imageUrl) || readText(payload.imagem) || readText(payload.foto) || readText(payload.photo);
-  return imageUrl.startsWith("http://") || imageUrl.startsWith("https://") ? imageUrl : undefined;
-}
+function buildFound(payload: ApiRecord, provider: string): ProviderResult {
+  const rawBrand =
+    readText(payload.marca) ||
+    readText(payload.MARCA) ||
+    readText(payload.brand) ||
+    readText(payload.fabricante) ||
+    readNested(payload, "extra", "marca");
 
-function mapPlatePayload(payload: ApiRecord, provider: string): ProviderResult {
-  const rawBrand = readText(payload.marca) || readText(payload.MARCA) || readNestedText(payload, "marca");
   const rawModel =
     readText(payload.modelo) ||
     readText(payload.MODELO) ||
+    readText(payload.model) ||
     readText(payload.marcaModelo) ||
     readText(payload.modeloMarca) ||
-    readNestedText(payload, "modelo");
+    readNested(payload, "extra", "modelo");
+
   const { brand, model } = cleanBrandModel(rawBrand, rawModel);
 
-  if (!brand || !model) {
+  if (!brand && !model) {
     return {
       status: "not_found",
       provider,
-      message: "Veículo não localizado automaticamente. Confira a placa ou preencha manualmente.",
+      message: "Placa não localizada. Preencha marca e modelo manualmente.",
     };
   }
 
+  const category = inferCategory(payload, brand, model);
+  const year =
+    readNumber(payload.anoModelo) ??
+    readNumber(payload.ano_modelo) ??
+    readNumber(payload.modelYear) ??
+    readNumber(payload.model_year) ??
+    readNumber(payload.ano);
+
   return {
     status: "found",
-    brand,
-    model,
-    version: readText(payload.versão) || readText(payload.VERSAO) || readText(payload.submodelo) || readText(payload.SUBMODELO) || undefined,
-    year:
-      readNumber(payload.anoModelo) ??
-      readNumber(payload.ano_modelo) ??
-      readNumber(payload.ano) ??
-      readNumber(readNestedText(payload, "ano_modelo")),
-    color: readText(payload.cor) || readText(payload.COR) || undefined,
-    category: inferCategory(payload),
+    brand: brand || model.split(" ")[0] || "Marca",
+    model: model || brand || "Modelo",
+    version:
+      readText(payload.versão) ||
+      readText(payload.VERSAO) ||
+      readText(payload.submodelo) ||
+      readText(payload.SUBMODELO) ||
+      undefined,
+    year: year ?? readNumber(payload.anoFabricacao) ?? readNumber(payload.manufacturingYear),
+    color: readText(payload.cor) || readText(payload.COR) || readText(payload.color) || undefined,
+    category,
     provider,
-    imageUrl: pickBestImage(payload),
+    imageUrl: localImageForCategory(category),
   };
 }
 
-async function fetchJson(url: string, timeoutMs = 6500, extraHeaders?: Record<string, string>) {
+async function fetchJson(url: string, timeoutMs = 8000, extraHeaders?: Record<string, string>) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -112,19 +137,16 @@ async function fetchJson(url: string, timeoutMs = 6500, extraHeaders?: Record<st
       signal: controller.signal,
       headers: {
         Accept: "application/json,text/plain;q=0.9,*/*;q=0.8",
-        "User-Agent": "TotalFlexOS/1.0",
+        "User-Agent": "TotalFlexOS/1.0 (+consulta veicular interna)",
         ...extraHeaders,
       },
     });
+
+    if (!response.ok) return null;
     const text = await response.text();
     const jsonStart = text.indexOf("{");
     const jsonEnd = text.lastIndexOf("}");
-    if (jsonStart < 0 || jsonEnd <= jsonStart) {
-      if (text.toLowerCase().includes("<html")) {
-        return { _rawHtml: text } as ApiRecord;
-      }
-      return null;
-    }
+    if (jsonStart < 0 || jsonEnd <= jsonStart) return null;
     return JSON.parse(text.slice(jsonStart, jsonEnd + 1)) as ApiRecord;
   } catch {
     return null;
@@ -133,98 +155,95 @@ async function fetchJson(url: string, timeoutMs = 6500, extraHeaders?: Record<st
   }
 }
 
-async function lookupApiCarros(plate: string): Promise<ProviderResult> {
-  const provider = "API-Carros público";
-  
-  const headers = {
-    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7"
-  };
+function randomGeolocation() {
+  const lat = (-23.5 + Math.random() * 2).toFixed(6);
+  const lng = (-46.6 + Math.random() * 2).toFixed(6);
+  return `${lng},${lat}`;
+}
 
-  let payload = await fetchJson(`http://apicarros.com/v1/consulta/${plate}/json`, 6500, headers);
-  
-  if (payload && payload._rawHtml) {
-    // Handling Cheq/Cloudflare style HTML redirects
-    const html = payload._rawHtml as string;
-    const redirectMatch = html.match(/URL=([^"]+)/i);
-    if (redirectMatch && redirectMatch[1]) {
-      const redirectUrl = redirectMatch[1].replace(/&amp;/g, "&");
-      payload = await fetchJson(redirectUrl, 6500, headers);
-    } else {
-      return { status: "unavailable", provider, message: "Bloqueio de segurança ao consultar API-Carros." };
+async function lookupSinespCidadao(plate: string): Promise<ProviderResult> {
+  const provider = "SINESP Cidadão";
+  const payload = await fetchJson(`https://cidadao2.sinesp.gov.br/api/vehicles/${plate}`, 9000, {
+    accept: "application/json",
+    geolocation: randomGeolocation(),
+    geolocationtimestamp: new Date().toISOString(),
+    geolocationaccuracy: "20",
+    adsid: crypto.randomUUID(),
+    Host: "cidadao2.sinesp.gov.br",
+    "User-Agent":
+      "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+  });
+
+  if (!payload) {
+    return { status: "unavailable", provider, message: "SINESP indisponível no momento." };
+  }
+
+  if (payload.error || payload.message) {
+    const message = readText(payload.message) || readText(payload.error);
+    if (message.toLowerCase().includes("nao encontr") || message.toLowerCase().includes("não encontr")) {
+      return { status: "not_found", provider, message: "Placa não encontrada no SINESP." };
     }
   }
 
-  if (!payload || payload._rawHtml) {
-    return { status: "unavailable", provider, message: "API-Carros não respondeu com dados de veículo." };
+  const mapped = buildFound(
+    {
+      marca: payload.brand ?? payload.marca ?? payload.fabricante,
+      modelo: payload.model ?? payload.modelo ?? payload.modeloMarca,
+      cor: payload.color ?? payload.cor,
+      anoModelo: payload.modelYear ?? payload.anoModelo ?? payload.model_year,
+      ano: payload.year ?? payload.ano ?? payload.manufacturingYear,
+      tipo_veiculo: payload.vehicleType ?? payload.tipo,
+      ...payload,
+    },
+    provider,
+  );
+
+  return mapped.status === "found" ? mapped : { status: "not_found", provider, message: "Placa não encontrada no SINESP." };
+}
+
+async function lookupApiCarros(plate: string): Promise<ProviderResult> {
+  const provider = "API Carros";
+  const payload = await fetchJson(`https://apicarros.com/v1/consulta/${plate}/json`, 8000, {
+    Accept: "application/json",
+    Referer: "https://apicarros.com/",
+  });
+
+  if (!payload) {
+    return { status: "unavailable", provider, message: "API Carros indisponível." };
   }
-  
-  if (readText(payload.codigoRetorno) && readText(payload.codigoRetorno) !== "0") {
+
+  const code = readText(payload.codigoRetorno);
+  if (code && code !== "0") {
     return {
       status: "not_found",
       provider,
-      message: readText(payload.mensagemRetorno) || "Placa não localizada no API-Carros.",
+      message: readText(payload.mensagemRetorno) || "Placa não localizada na API Carros.",
     };
   }
-  return mapPlatePayload(payload, provider);
+
+  return buildFound(payload, provider);
 }
 
 async function lookupWdapi(plate: string): Promise<ProviderResult> {
-  const provider = "WD API público";
-  const payload = await fetchJson(`https://wdapi2.com.br/consulta/${plate}`, 5000);
-  if (!payload || payload._rawHtml) {
-    return { status: "unavailable", provider, message: "WD API não respondeu com dados." };
-  }
-  return mapPlatePayload(payload, provider);
+  const provider = "WD API";
+  const payload = await fetchJson(`https://wdapi2.com.br/consulta/${plate}/json`, 7000);
+  if (!payload) return { status: "unavailable", provider, message: "WD API indisponível." };
+  return buildFound(payload, provider);
 }
 
 async function lookupMasterPlaca(plate: string): Promise<ProviderResult> {
-  const provider = "MasterPlaca público";
+  const provider = "MasterPlaca";
   const urls = [
     `https://api.masterplaca.devplank.com/v2/placa/${plate}/json`,
     `http://api.masterplaca.devplank.com/v2/placa/${plate}/json`,
   ];
 
   for (const url of urls) {
-    const payload = await fetchJson(url, 5000);
-    if (!payload) continue;
-    return mapPlatePayload(payload, provider);
+    const payload = await fetchJson(url, 6000);
+    if (payload) return buildFound(payload, provider);
   }
 
-  return { status: "unavailable", provider, message: "MasterPlaca não respondeu com dados de veículo." };
-}
-
-async function lookupWikimediaVehicleImage(brand: string, model: string, year?: number) {
-  const query = [brand, model, year, "car"].filter(Boolean).join(" ");
-  const params = new URLSearchParams({
-    action: "query",
-    generator: "search",
-    gsrsearch: query,
-    gsrnamespace: "6",
-    gsrlimit: "5",
-    prop: "imageinfo",
-    iiprop: "url",
-    iiurlwidth: "640",
-    format: "json",
-    origin: "*",
-  });
-  const payload = await fetchJson(`https://commons.wikimedia.org/w/api.php?${params.toString()}`, 6000);
-  const pages = payload?.query && typeof payload.query === "object" ? (payload.query as ApiRecord).pages : undefined;
-  if (!pages || typeof pages !== "object") return undefined;
-
-  for (const page of Object.values(pages as ApiRecord)) {
-    if (!page || typeof page !== "object") continue;
-    const imageInfo = (page as ApiRecord).imageinfo;
-    const first = Array.isArray(imageInfo) ? imageInfo[0] : undefined;
-    if (!first || typeof first !== "object") continue;
-    const thumbUrl = readText((first as ApiRecord).thumburl);
-    const url = readText((first as ApiRecord).url);
-    const imageUrl = thumbUrl || url;
-    if (imageUrl.startsWith("https://upload.wikimedia.org/")) return imageUrl;
-  }
-
-  return undefined;
+  return { status: "unavailable", provider, message: "MasterPlaca indisponível." };
 }
 
 export async function GET(_request: Request, context: RouteContext) {
@@ -242,20 +261,18 @@ export async function GET(_request: Request, context: RouteContext) {
     );
   }
 
-  const lookupFns = [lookupApiCarros, lookupWdapi, lookupMasterPlaca];
+  const providers = [lookupSinespCidadao, lookupApiCarros, lookupWdapi, lookupMasterPlaca];
   let lastNotFound: ProviderResult | undefined;
 
-  for (const fn of lookupFns) {
-    const attempt = await fn(plate);
+  for (const lookup of providers) {
+    const attempt = await lookup(plate);
     if (attempt.status === "found") {
       return NextResponse.json({
         ...attempt,
-        imageUrl: attempt.imageUrl ?? (await lookupWikimediaVehicleImage(attempt.brand, attempt.model, attempt.year)),
+        imageUrl: localImageForCategory(attempt.category ?? "car"),
       } satisfies VehicleLookupResult);
     }
-    if (attempt.status === "not_found") {
-      lastNotFound = attempt;
-    }
+    if (attempt.status === "not_found") lastNotFound = attempt;
   }
 
   if (lastNotFound) return NextResponse.json(lastNotFound satisfies VehicleLookupResult);
@@ -263,6 +280,6 @@ export async function GET(_request: Request, context: RouteContext) {
   return NextResponse.json({
     status: "unavailable",
     provider: "Consulta veicular gratuita",
-    message: "As consultas gratuitas de placa não retornaram agora. Continue com cadastro manual.",
+    message: "Consulta automática indisponível agora. Continue com cadastro manual.",
   } satisfies VehicleLookupResult);
 }
