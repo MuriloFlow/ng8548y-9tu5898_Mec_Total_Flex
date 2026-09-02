@@ -96,3 +96,62 @@ textarea:focus {
 .animate-gentle-pulse {
   animation: gentle-pulse 2s ease-in-out infinite;
 }
+
+.boot-screen {
+  background-image:
+    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.95), transparent 42%),
+    linear-gradient(180deg, #fcfcfd 0%, #f4f4f5 100%);
+}
+
+.boot-orb {
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(60px);
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.boot-orb-a {
+  top: 12%;
+  left: 18%;
+  width: 220px;
+  height: 220px;
+  background: rgba(16, 185, 129, 0.18);
+  animation: boot-float 7s ease-in-out infinite;
+}
+
+.boot-orb-b {
+  right: 10%;
+  bottom: 10%;
+  width: 260px;
+  height: 260px;
+  background: rgba(59, 130, 246, 0.12);
+  animation: boot-float 9s ease-in-out infinite reverse;
+}
+
+.boot-logo-wrap {
+  animation: boot-float 4.8s ease-in-out infinite;
+}
+
+.boot-progress-bar {
+  animation: boot-shimmer 1.35s ease-in-out infinite;
+}
+
+@keyframes boot-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes boot-shimmer {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}

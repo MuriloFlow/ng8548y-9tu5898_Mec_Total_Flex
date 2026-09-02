@@ -1,49 +1,45 @@
 import { NextResponse } from "next/server";
-import { createSupabaseAdminClient } from "@/lib/supabase/server";
-
-/**
- * Total Flex - Setup (simplified)
- * Returns config status so the UI can guide the user.
- * Table creation is done manually via SQLFINAL.sql.
- */
+import { createSupabaseAdminClient, isSupabaseServerConfigured } from "@/lib/supabase/server";
+import { restSelectSnapshot } from "@/lib/supabase/rest";
 
 export async function GET() {
-  const supabase = createSupabaseAdminClient();
-  if (!supabase) {
+  if (!isSupabaseServerConfigured()) {
     return NextResponse.json({
       configured: false,
+      tableExists: false,
       detail: "Variáveis de ambiente não configuradas.",
     });
   }
 
-  // Test connection by reading the table
-  try {
-    const { error } = await supabase
-      .from("workshop_app_snapshots")
-      .select("id")
-      .eq("id", "singleton")
-      .maybeSingle();
-
-    if (error) {
-      const isMissing =
-        error.code === "42P01" ||
-        error.message?.includes("does not exist") ||
-        error.message?.includes("relation");
-      return NextResponse.json({
-        configured: true,
-        tableExists: !isMissing,
-        detail: isMissing
-          ? "Tabela não existe. Execute SQLFINAL.sql no Supabase SQL Editor."
-          : `Erro: ${error.message}`,
-      });
+  const supabase = createSupabaseAdminClient();
+  if (supabase) {
+    const { error } = await supabase.from("workshop_app_snapshots").select("id").eq("id", "singleton").maybeSingle();
+    if (!error) {
+      return NextResponse.json({ configured: true, tableExists: true, detail: "Conexão OK" });
     }
 
-    return NextResponse.json({ configured: true, tableExists: true, detail: "Conexão OK ✅" });
-  } catch (err) {
-    return NextResponse.json({
-      configured: true,
-      tableExists: false,
-      detail: `Erro de conexão: ${String(err)}`,
-    });
+    const isMissing =
+      error.code === "42P01" || error.message?.includes("does not exist") || error.message?.includes("relation");
+    if (isMissing) {
+      return NextResponse.json({
+        configured: true,
+        tableExists: false,
+        detail: "Tabela não existe. Execute SQL_COMPLETO.sql no Supabase SQL Editor.",
+      });
+    }
   }
+
+  const rest = await restSelectSnapshot<{ id: string }>("workshop_app_snapshots", "singleton", "id");
+  if (!rest.error) {
+    return NextResponse.json({ configured: true, tableExists: true, detail: "Conexão OK (REST)" });
+  }
+
+  const isMissing = rest.error.code === "42P01" || rest.error.message.includes("does not exist");
+  return NextResponse.json({
+    configured: true,
+    tableExists: !isMissing,
+    detail: isMissing
+      ? "Tabela não existe. Execute SQL_COMPLETO.sql no Supabase SQL Editor."
+      : `Erro: ${rest.error.message}`,
+  });
 }

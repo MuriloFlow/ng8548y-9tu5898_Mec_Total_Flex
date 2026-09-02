@@ -62,6 +62,7 @@ type StoreSnapshot = {
   currentUserId: string | null;
   ready: boolean;
   syncStatus: SyncStatus;
+  syncError: string;
 };
 
 const serverSnapshot: StoreSnapshot = {
@@ -69,6 +70,7 @@ const serverSnapshot: StoreSnapshot = {
   currentUserId: null,
   ready: false,
   syncStatus: "idle",
+  syncError: "",
 };
 
 let snapshot: StoreSnapshot = serverSnapshot;
@@ -80,6 +82,8 @@ type StoreContextValue = {
   state: WorkshopState | null;
   ready: boolean;
   syncStatus: SyncStatus;
+  syncError: string;
+  retryConnection: () => Promise<void>;
   currentUser: WorkshopState["users"][number] | null;
   login: (username: string, password: string) => Promise<boolean>;
   logout: () => void;
@@ -189,6 +193,7 @@ function getClientSnapshot() {
       currentUserId: readStoredAuthUserId(),
       ready: false,
       syncStatus: "idle",
+      syncError: "",
     };
     initialized = true;
   }
@@ -223,10 +228,10 @@ function stripPhotosForSync(state: WorkshopState): Record<string, unknown> {
   return state as unknown as Record<string, unknown>;
 }
 
-function patchSyncStatus(status: SyncStatus) {
+function patchSyncStatus(status: SyncStatus, error = lastSyncError) {
   const current = getClientSnapshot();
-  if (current.syncStatus === status) return;
-  setWorkshopSnapshot({ ...current, syncStatus: status });
+  if (current.syncStatus === status && current.syncError === error) return;
+  setWorkshopSnapshot({ ...current, syncStatus: status, syncError: error });
 }
 
 function scheduleSync(state: WorkshopState, immediate = false) {
@@ -313,50 +318,67 @@ function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-async function loadStateFromSupabaseUntilReady() {
-  while (true) {
-    setWorkshopSnapshot({ ...snapshot, state: null, ready: false, syncStatus: "syncing" });
+async function fetchRemoteStateOnce(): Promise<{ ok: true; state: WorkshopState } | { ok: false; reason: SyncStatus; detail: string }> {
+  try {
+    const response = await fetch("/api/workshop/sync", { cache: "no-store" });
+    const body = (await response.json().catch(() => ({}))) as {
+      state?: WorkshopState | null;
+      source?: string;
+      detail?: string;
+      reason?: string;
+    };
 
-    try {
-      const response = await fetch("/api/workshop/sync", { cache: "no-store" });
-      const body = (await response.json().catch(() => ({}))) as {
-        state?: WorkshopState | null;
-        source?: string;
-        detail?: string;
-        reason?: string;
-      };
-
-      if (response.ok && body.source === "supabase" && body.state?.updatedAt) {
-        lastSyncError = "";
-        setWorkshopSnapshot({
-          ...snapshot,
-          state: body.state,
-          ready: true,
-          syncStatus: "synced",
-        });
-        return;
-      }
-
-      lastSyncError =
-        body.detail ||
-        body.reason ||
-        (body.source === "supabase" ? "Snapshot inicial vazio. Execute SQLFINAL.sql novamente." : "HTTP " + response.status);
-
-      setWorkshopSnapshot({
-        ...snapshot,
-        state: null,
-        ready: false,
-        syncStatus:
-          body.reason === "table_missing" || body.source === "table_missing"
-            ? "table_missing"
-            : "error",
-      });
-    } catch (err) {
-      lastSyncError = err instanceof Error ? err.message : String(err);
-      setWorkshopSnapshot({ ...snapshot, state: null, ready: false, syncStatus: "error" });
+    if (response.ok && body.source === "supabase" && body.state?.updatedAt) {
+      return { ok: true, state: body.state };
     }
 
-    const retryMs = lastSyncError.includes("conectar") || lastSyncError.includes("connection") ? 5000 : 2500;
+    const detail = body.detail || body.reason || `HTTP ${response.status}`;
+    const reason: SyncStatus =
+      body.reason === "table_missing" || body.source === "table_missing"
+        ? "table_missing"
+        : "error";
+    return { ok: false, reason, detail };
+  } catch (err) {
+    return {
+      ok: false,
+      reason: "error",
+      detail: err instanceof Error ? err.message : "Falha de rede ao conectar ao servidor.",
+    };
+  }
+}
+
+async function loadStateFromSupabaseUntilReady() {
+  while (true) {
+    setWorkshopSnapshot({ ...snapshot, state: null, ready: false, syncStatus: "syncing", syncError: "" });
+
+    const result = await fetchRemoteStateOnce();
+    if (result.ok) {
+      lastSyncError = "";
+      setWorkshopSnapshot({
+        ...snapshot,
+        state: result.state,
+        ready: true,
+        syncStatus: "synced",
+        syncError: "",
+      });
+      return;
+    }
+
+    lastSyncError = result.detail;
+    setWorkshopSnapshot({
+      ...snapshot,
+      state: null,
+      ready: false,
+      syncStatus: result.reason,
+      syncError: result.detail,
+    });
+
+    const retryMs =
+      result.detail.toLowerCase().includes("conectar") ||
+      result.detail.toLowerCase().includes("connection") ||
+      result.detail.toLowerCase().includes("fetch failed")
+        ? 6000
+        : 3000;
     await wait(retryMs);
   }
 }
@@ -412,7 +434,7 @@ function ensurePermission(currentUser: StoreContextValue["currentUser"], permiss
 }
 
 export function WorkshopProvider({ children }: { children: ReactNode }) {
-  const { state, currentUserId, ready, syncStatus } = useSyncExternalStore(
+  const { state, currentUserId, ready, syncStatus, syncError } = useSyncExternalStore(
     subscribeStore,
     getClientSnapshot,
     () => serverSnapshot,
@@ -443,6 +465,32 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
 
     window.addEventListener("pagehide", flushPendingSync);
     return () => window.removeEventListener("pagehide", flushPendingSync);
+  }, []);
+
+  const retryConnection = useCallback(async () => {
+    setWorkshopSnapshot({ ...getClientSnapshot(), ready: false, syncStatus: "syncing", syncError: "" });
+    const result = await fetchRemoteStateOnce();
+    if (result.ok) {
+      lastSyncError = "";
+      setWorkshopSnapshot({
+        ...getClientSnapshot(),
+        state: result.state,
+        ready: true,
+        syncStatus: "synced",
+        syncError: "",
+      });
+      toast.success("Conectado ao Supabase.");
+      return;
+    }
+    lastSyncError = result.detail;
+    setWorkshopSnapshot({
+      ...getClientSnapshot(),
+      state: null,
+      ready: false,
+      syncStatus: result.reason,
+      syncError: result.detail,
+    });
+    toast.error(result.detail.slice(0, 140));
   }, []);
 
   // ─────────────────────────────────────────────────────────────
@@ -1217,6 +1265,8 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
       state,
       ready,
       syncStatus,
+      syncError,
+      retryConnection,
       currentUser,
       login,
       logout,
@@ -1270,7 +1320,9 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
       removePhoto,
       forceSync,
       resetDemoData,
+      retryConnection,
       state,
+      syncError,
       syncStatus,
       toggleOrderItemDone,
       updateOrderItem,

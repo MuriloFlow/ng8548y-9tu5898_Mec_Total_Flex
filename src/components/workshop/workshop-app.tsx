@@ -249,7 +249,7 @@ export function WorkshopApp() {
   );
 }
 function WorkshopRuntime() {
-  const { ready, currentUser, state, syncStatus } = useWorkshop();
+  const { ready, currentUser, state, syncStatus, syncError, retryConnection } = useWorkshop();
 
   // Register service worker on mount
   useEffect(() => {
@@ -276,43 +276,82 @@ function WorkshopRuntime() {
   }, [currentUser, state]);
 
   if (!ready) {
-    return <DatabaseSkeleton status={syncStatus} />;
+    return <DatabaseSkeleton status={syncStatus} error={syncError} onRetry={retryConnection} />;
   }
 
   return currentUser ? <WorkspaceShell /> : <LoginScreen />;
 }
 
-function DatabaseSkeleton({ status }: { status: string }) {
-  const message =
+function DatabaseSkeleton({
+  status,
+  error,
+  onRetry,
+}: {
+  status: string;
+  error?: string;
+  onRetry: () => Promise<void>;
+}) {
+  const [retrying, setRetrying] = useState(false);
+  const isError = status === "error" || status === "table_missing";
+  const title =
     status === "table_missing"
-      ? "Aguardando SQLFINAL.sql no Supabase"
-      : status === "error"
-        ? "Sem conexão com o Supabase — verifique .env e se o projeto não está pausado"
-        : "Carregando dados do Supabase";
+      ? "Banco ainda não configurado"
+      : isError
+        ? "Não foi possível conectar"
+        : "Preparando seu ambiente";
+
+  const subtitle =
+    status === "table_missing"
+      ? "Execute o SQL_COMPLETO.sql no Supabase para criar as tabelas."
+      : isError
+        ? error || "Verifique URL e service role key no .env, e se o projeto Supabase está ativo."
+        : "Sincronizando dados da oficina com segurança.";
+
+  async function handleRetry() {
+    setRetrying(true);
+    await onRetry();
+    setRetrying(false);
+  }
 
   return (
-    <main className="grid min-h-dvh place-items-center bg-[#f4f5f7] px-5 text-zinc-950">
-      <div className="flex w-full max-w-sm flex-col items-center text-center">
-        <div className="relative grid size-28 place-items-center rounded-[2rem] border border-zinc-200 bg-white shadow-2xl shadow-zinc-950/10">
-          <NextImage
-            src="/assets/logo.png"
-            alt="Auto Mecanica Total Flex"
-            width={180}
-            height={100}
-            priority
-            className="h-16 w-24 object-contain"
-          />
-          <span className="absolute -bottom-2 grid size-8 place-items-center rounded-full bg-zinc-950 text-white shadow-lg">
-            <Car className="size-4" />
-          </span>
+    <main className="boot-screen relative flex min-h-dvh items-center justify-center overflow-hidden bg-[#fafafa] px-6 py-10 text-zinc-950">
+      <div className="boot-orb boot-orb-a" />
+      <div className="boot-orb boot-orb-b" />
+
+      <div className="relative z-10 w-full max-w-[22rem] text-center">
+        <div className="boot-logo-wrap mx-auto grid size-[5.5rem] place-items-center rounded-[1.75rem] bg-white/80 shadow-[0_20px_50px_-20px_rgba(0,0,0,0.25)] ring-1 ring-black/[0.04] backdrop-blur-xl">
+          <NextImage src="/assets/logo.png" alt="Total Flex" width={120} height={72} priority className="h-12 w-auto object-contain" />
         </div>
-        <div className="mt-8 h-1.5 w-40 overflow-hidden rounded-full bg-zinc-200">
-          <div className="h-full w-1/2 animate-pulse rounded-full bg-zinc-950" />
+
+        <div className="mt-10">
+          {!isError ? (
+            <div className="boot-progress mx-auto h-[3px] w-44 overflow-hidden rounded-full bg-zinc-200/80">
+              <div className="boot-progress-bar h-full w-2/5 rounded-full bg-zinc-900" />
+            </div>
+          ) : (
+            <div className="mx-auto flex size-11 items-center justify-center rounded-full bg-rose-50 ring-1 ring-rose-100">
+              <span className="size-2.5 rounded-full bg-rose-500" />
+            </div>
+          )}
         </div>
-        <div className="mt-5 rounded-2xl border border-zinc-200 bg-white px-5 py-4 shadow-sm">
-          <p className="text-sm font-black">{message}</p>
-          <p className="mt-1 text-xs font-medium text-zinc-500">O app so abre com dados reais do banco.</p>
+
+        <div className="mt-8 space-y-2">
+          <h1 className="text-[1.05rem] font-semibold tracking-[-0.02em] text-zinc-900">{title}</h1>
+          <p className="text-sm leading-relaxed text-zinc-500">{subtitle}</p>
         </div>
+
+        {isError ? (
+          <div className="mt-8 space-y-3">
+            <Button type="button" className="h-11 w-full rounded-xl" disabled={retrying} onClick={handleRetry}>
+              {retrying ? "Tentando novamente..." : "Tentar conectar novamente"}
+            </Button>
+            <p className="text-xs leading-relaxed text-zinc-400">
+              Confirme no Supabase: projeto ativo, SQL executado e .env reiniciado após salvar.
+            </p>
+          </div>
+        ) : (
+          <p className="mt-8 text-[11px] font-medium uppercase tracking-[0.24em] text-zinc-400">Total Flex OS</p>
+        )}
       </div>
     </main>
   );

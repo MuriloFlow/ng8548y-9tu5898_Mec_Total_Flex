@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
+import { restSelectSnapshot, restUpsertSnapshot } from "@/lib/supabase/rest";
 import { syncEntitiesToTables } from "@/lib/workshop/entity-sync";
 import { createSeedState } from "@/lib/workshop/seed";
 import type { WorkshopState } from "@/lib/workshop/types";
@@ -78,17 +79,28 @@ async function readSnapshot() {
   }
 
   let lastError: SupabaseError | null = null;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
     const { data, error } = await supabase.from(TABLE).select("state, updated_at").eq("id", ROW_ID).maybeSingle<SnapshotRow>();
     if (!error) {
       return { supabase, row: data ?? null };
     }
     lastError = error;
-    if (!isConnectionError(error) || attempt === 3) break;
-    await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    if (!isConnectionError(error) || attempt === 2) break;
+    await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
   }
 
-  return { response: mapSupabaseReadError(lastError ?? { message: "Erro desconhecido" }) };
+  // Fallback direto via REST quando o client JS falha (comum no Windows/Node)
+  const rest = await restSelectSnapshot<SnapshotRow>(TABLE, ROW_ID, "state,updated_at");
+  if (!rest.error) {
+    return { supabase, row: rest.data };
+  }
+
+  const mergedError: SupabaseError = {
+    code: rest.error.code ?? lastError?.code,
+    message: rest.error.message || lastError?.message || "Erro desconhecido",
+  };
+
+  return { response: mapSupabaseReadError(mergedError) };
 }
 
 async function writeSnapshot(state: WorkshopState, updatedBy: string) {
@@ -101,18 +113,28 @@ async function writeSnapshot(state: WorkshopState, updatedBy: string) {
 
   const updatedAt = new Date().toISOString();
   const stateToSave: WorkshopState = { ...state, updatedAt };
-  const { error } = await supabase.from(TABLE).upsert(
-    {
-      id: ROW_ID,
-      company_id: stateToSave.company.id || DEFAULT_COMPANY_ID,
-      state: stateToSave,
-      updated_by: updatedBy,
-      updated_at: updatedAt,
-    },
-    { onConflict: "id" },
-  );
+  const rowPayload = {
+    id: ROW_ID,
+    company_id: stateToSave.company.id || DEFAULT_COMPANY_ID,
+    state: stateToSave,
+    updated_by: updatedBy,
+    updated_at: updatedAt,
+  };
 
-  if (error) {
+  const { error } = await supabase.from(TABLE).upsert(rowPayload, { onConflict: "id" });
+
+  if (error && isConnectionError(error)) {
+    const restWrite = await restUpsertSnapshot<SnapshotRow>(TABLE, rowPayload);
+    if (restWrite.error) {
+      return {
+        response: serverError(
+          missingTable(restWrite.error) ? "Tabela workshop_app_snapshots nao existe. Execute SQLFINAL.sql no Supabase." : `Erro Supabase: ${restWrite.error.message}`,
+          missingTable(restWrite.error) ? 503 : 500,
+          missingTable(restWrite.error) ? "table_missing" : "write_failed",
+        ),
+      };
+    }
+  } else if (error) {
     return {
       response: serverError(
         missingTable(error) ? "Tabela workshop_app_snapshots nao existe. Execute SQLFINAL.sql no Supabase." : `Erro Supabase: ${error.message}`,
@@ -122,14 +144,28 @@ async function writeSnapshot(state: WorkshopState, updatedBy: string) {
     };
   }
 
-  const { data: saved, error: verifyError } = await supabase.from(TABLE).select("state, updated_at").eq("id", ROW_ID).maybeSingle<SnapshotRow>();
-  if (verifyError || !validState(saved?.state)) {
-    return {
-      response: serverError(verifyError?.message ? `Salvou, mas nao confirmou leitura: ${verifyError.message}` : "Salvou, mas nao confirmou o snapshot.", 500, "verify_failed"),
-    };
+  let saved: SnapshotRow | null = null;
+  const { data: savedClient, error: verifyError } = await supabase.from(TABLE).select("state, updated_at").eq("id", ROW_ID).maybeSingle<SnapshotRow>();
+  if (!verifyError && validState(savedClient?.state)) {
+    saved = savedClient;
+  } else {
+    const restRead = await restSelectSnapshot<SnapshotRow>(TABLE, ROW_ID, "state,updated_at");
+    if (restRead.data && validState(restRead.data.state)) {
+      saved = restRead.data;
+    } else {
+      return {
+        response: serverError(
+          verifyError?.message || restRead.error?.message
+            ? `Salvou, mas nao confirmou leitura: ${verifyError?.message || restRead.error?.message}`
+            : "Salvou, mas nao confirmou o snapshot.",
+          500,
+          "verify_failed",
+        ),
+      };
+    }
   }
 
-  const entitySync = await syncEntitiesToTables(supabase, saved.state).catch((err) => ({
+  const entitySync = await syncEntitiesToTables(supabase, saved.state!).catch((err) => ({
     ok: false as const,
     error: err instanceof Error ? err.message : String(err),
     tables: [] as string[],
