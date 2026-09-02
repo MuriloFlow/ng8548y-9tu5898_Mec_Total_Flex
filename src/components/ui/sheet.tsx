@@ -18,6 +18,7 @@ function useVisualViewportInset() {
     const updateInset = () => {
       const inset = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
       document.documentElement.style.setProperty("--keyboard-inset", `${Math.round(inset)}px`);
+      document.documentElement.style.setProperty("--sheet-viewport-height", `${Math.round(viewport.height)}px`);
     };
 
     updateInset();
@@ -27,6 +28,7 @@ function useVisualViewportInset() {
       viewport.removeEventListener("resize", updateInset);
       viewport.removeEventListener("scroll", updateInset);
       document.documentElement.style.removeProperty("--keyboard-inset");
+      document.documentElement.style.removeProperty("--sheet-viewport-height");
     };
   }, []);
 }
@@ -61,8 +63,8 @@ export const SheetContent = React.forwardRef<
           className,
         )}
         style={{
-          bottom: "var(--keyboard-inset, 0px)",
-          maxHeight: "calc(92dvh - var(--keyboard-inset, 0px))",
+          bottom: 0,
+          maxHeight: "min(92dvh, calc(var(--sheet-viewport-height, 100dvh) - 12px))",
           ...style,
         }}
         {...props}

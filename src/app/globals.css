@@ -76,11 +76,16 @@ textarea:focus {
 }
 
 .sheet-scroll-area {
-  max-height: min(72dvh, calc(100dvh - var(--keyboard-inset, 0px) - 112px));
+  max-height: min(72dvh, calc(var(--sheet-viewport-height, 100dvh) - 112px));
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-bottom: calc(1.5rem + env(safe-area-inset-bottom));
-  scroll-padding-bottom: calc(8rem + var(--keyboard-inset, 0px));
+  scroll-padding-bottom: calc(8rem + env(safe-area-inset-bottom));
+}
+
+.sheet-scroll-area :is(input, select, textarea) {
+  scroll-margin-top: 5rem;
+  scroll-margin-bottom: 8rem;
 }
 
 /* Premium badge pulse for important statuses */

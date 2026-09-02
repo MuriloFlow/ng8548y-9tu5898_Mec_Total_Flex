@@ -209,63 +209,105 @@ function setWorkshopSnapshot(next: StoreSnapshot) {
   emitStoreChange();
 }
 
-let syncRetryCount = 0;
-let lastSyncTime = 0;
 const MAX_SYNC_RETRIES = 3;
-const MIN_SYNC_INTERVAL = 2000;
+let syncInFlight: Promise<SyncStatus> | null = null;
+let queuedSyncState: WorkshopState | null = null;
+let lastSyncError = "";
+
+let syncDebounceTimer: number | null = null;
+let latestStateForSync: WorkshopState | null = null;
 
 /** Keep the snapshot complete; Supabase is the source for every app record. */
 function stripPhotosForSync(state: WorkshopState): Record<string, unknown> {
   return state as unknown as Record<string, unknown>;
 }
 
-async function syncToSupabase(state: WorkshopState): Promise<SyncStatus> {
-  const now = Date.now();
-  if (now - lastSyncTime < MIN_SYNC_INTERVAL) return "synced";
-  lastSyncTime = now;
-
-  const stripped = stripPhotosForSync(state);
-  const payload = JSON.stringify({ state: stripped });
-  console.log("[TF] Sync payload size:", payload.length, "bytes");
-
-  try {
-    const response = await fetch("/api/workshop/sync", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: payload,
-    });
-
-    const body = await response.json().catch(() => ({}));
-
-    if (!response.ok || body?.ok === false) {
-      const detail = body?.detail || body?.error || `HTTP ${response.status}`;
-      if (body?.reason === "table_missing") {
-        console.warn("[TF] Tabela não existe. Execute SQLFINAL.sql.");
-        return "table_missing";
-      }
-      console.error("[TF] Sync failed:", detail);
-      throw new Error(detail);
-    }
-
-    console.log("[TF] Sync OK ✅");
-    syncRetryCount = 0;
-    return "synced";
-  } catch (err) {
-    syncRetryCount++;
-    const msg = err instanceof Error ? err.message : String(err);
-    if (syncRetryCount < MAX_SYNC_RETRIES) {
-      console.warn(`[TF] Sync retry ${syncRetryCount}/${MAX_SYNC_RETRIES}:`, msg);
-      await new Promise((r) => setTimeout(r, 1000 * syncRetryCount));
-      return syncToSupabase(state);
-    }
-    console.error("[TF] Sync permanently failed:", msg);
-    lastSyncError = msg;
-    return "error";
-  }
+function patchSyncStatus(status: SyncStatus) {
+  const current = getClientSnapshot();
+  if (current.syncStatus === status) return;
+  setWorkshopSnapshot({ ...current, syncStatus: status });
 }
 
-let lastSyncError = "";
+function scheduleSync(state: WorkshopState, immediate = false) {
+  latestStateForSync = state;
+  if (typeof window === "undefined") return;
 
+  if (syncDebounceTimer) window.clearTimeout(syncDebounceTimer);
+
+  const delay = immediate ? 0 : 250;
+  syncDebounceTimer = window.setTimeout(() => {
+    syncDebounceTimer = null;
+    if (!latestStateForSync) return;
+    const toSync = latestStateForSync;
+    patchSyncStatus("syncing");
+    void syncToSupabase(toSync).then((status) => {
+      patchSyncStatus(status);
+      if (status === "error" && lastSyncError) {
+        toast.error(`Erro ao salvar: ${lastSyncError.slice(0, 120)}`);
+      }
+    });
+  }, delay);
+}
+
+async function writeSnapshotToSupabase(state: WorkshopState): Promise<SyncStatus> {
+  const stripped = stripPhotosForSync(state);
+  const payload = JSON.stringify({ state: stripped });
+
+  for (let attempt = 1; attempt <= MAX_SYNC_RETRIES; attempt += 1) {
+    try {
+      const response = await fetch("/api/workshop/sync", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+        cache: "no-store",
+      });
+
+      const body = await response.json().catch(() => ({}));
+
+      if (!response.ok || body?.ok === false) {
+        const detail = body?.detail || body?.error || `HTTP ${response.status}`;
+        if (body?.reason === "table_missing") {
+          lastSyncError = detail;
+          return "table_missing";
+        }
+        throw new Error(detail);
+      }
+
+      lastSyncError = "";
+      return "synced";
+    } catch (err) {
+      lastSyncError = err instanceof Error ? err.message : String(err);
+      if (attempt < MAX_SYNC_RETRIES) {
+        await new Promise((resolve) => window.setTimeout(resolve, 600 * attempt));
+      }
+    }
+  }
+
+  return "error";
+}
+
+async function drainSyncQueue(): Promise<SyncStatus> {
+  let finalStatus: SyncStatus = "synced";
+
+  while (queuedSyncState) {
+    const nextState = queuedSyncState;
+    queuedSyncState = null;
+    finalStatus = await writeSnapshotToSupabase(nextState);
+    if (finalStatus !== "synced") break;
+  }
+
+  return finalStatus;
+}
+
+async function syncToSupabase(state: WorkshopState): Promise<SyncStatus> {
+  queuedSyncState = state;
+  if (!syncInFlight) {
+    syncInFlight = drainSyncQueue().finally(() => {
+      syncInFlight = null;
+    });
+  }
+  return syncInFlight;
+}
 function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -284,7 +326,6 @@ async function loadStateFromSupabaseUntilReady() {
       };
 
       if (response.ok && body.source === "supabase" && body.state?.updatedAt) {
-        syncRetryCount = 0;
         lastSyncError = "";
         setWorkshopSnapshot({
           ...snapshot,
@@ -315,9 +356,10 @@ async function loadStateFromSupabaseUntilReady() {
   }
 }
 
-function setWorkshopState(nextState: WorkshopState) {
+function setWorkshopState(nextState: WorkshopState, options?: { syncImmediately?: boolean }) {
   const current = getClientSnapshot();
   setWorkshopSnapshot({ ...current, state: nextState, ready: true });
+  scheduleSync(nextState, options?.syncImmediately ?? false);
 }
 
 function setAuthenticatedUser(userId: string | null) {
@@ -365,7 +407,11 @@ function ensurePermission(currentUser: StoreContextValue["currentUser"], permiss
 }
 
 export function WorkshopProvider({ children }: { children: ReactNode }) {
-  const { state, currentUserId, ready } = useSyncExternalStore(subscribeStore, getClientSnapshot, () => serverSnapshot);
+  const { state, currentUserId, ready, syncStatus } = useSyncExternalStore(
+    subscribeStore,
+    getClientSnapshot,
+    () => serverSnapshot,
+  );
 
   // ?????????????????????????????????????????????????????????????
   // Load from Supabase on first load
@@ -376,37 +422,37 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
     void loadStateFromSupabaseUntilReady();
   }, []);
 
-  // ─────────────────────────────────────────────────────────────
-  // Sync to Supabase after every change (debounced)
-  // ─────────────────────────────────────────────────────────────
+  // Flush pending sync when the tab closes
   useEffect(() => {
-    if (!ready || !state) return;
-
-    const timeout = window.setTimeout(() => {
-      setWorkshopSnapshot({ ...snapshot, syncStatus: "syncing" });
-      void syncToSupabase(state).then((status) => {
-        setWorkshopSnapshot({ ...snapshot, syncStatus: status });
-        if (status === "error" && lastSyncError) {
-          toast.error(`Erro ao salvar: ${lastSyncError.slice(0, 120)}`);
-        }
+    function flushPendingSync() {
+      if (!latestStateForSync || snapshot.syncStatus === "synced") return;
+      const payload = JSON.stringify({ state: stripPhotosForSync(latestStateForSync) });
+      void fetch("/api/workshop/sync", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+        keepalive: true,
+        cache: "no-store",
       });
-    }, 500);
+    }
 
-    return () => window.clearTimeout(timeout);
-  }, [ready, state]);
+    window.addEventListener("pagehide", flushPendingSync);
+    return () => window.removeEventListener("pagehide", flushPendingSync);
+  }, []);
 
   // ─────────────────────────────────────────────────────────────
   // Manual force sync
   // ─────────────────────────────────────────────────────────────
   const forceSync = useCallback(async () => {
     if (!state) return;
-    setWorkshopSnapshot({ ...snapshot, syncStatus: "syncing" });
+    scheduleSync(state, true);
+    patchSyncStatus("syncing");
     const status = await syncToSupabase(state);
-    setWorkshopSnapshot({ ...snapshot, syncStatus: status });
+    patchSyncStatus(status);
     if (status === "synced") {
       toast.success("Dados salvos no Supabase com sucesso!");
     } else {
-      const detail = lastSyncError || "Verifique as variáveis de ambiente no Vercel.";
+      const detail = lastSyncError || "Verifique SUPABASE_SERVICE_ROLE_KEY no .env ou Vercel.";
       toast.error(`Falha ao salvar: ${detail.slice(0, 150)}`);
     }
   }, [state]);
@@ -417,15 +463,15 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
   }, [currentUserId, state]);
 
   const commit = useCallback(
-    <T,>(producer: (draft: WorkshopState, userId: string) => T) => {
+    <T,>(producer: (draft: WorkshopState, userId: string) => T, options?: { syncImmediately?: boolean }) => {
       if (!state) throw new Error("Base de dados ainda não carregada.");
       const userId = currentUser?.id ?? state.users[0]?.id;
-      if (!userId) throw new Error("Usuário não identificado.");
+      if (!userId) throw new Error("Usuario nao identificado.");
 
       const draft = cloneState(state);
       const result = producer(draft, userId);
       draft.updatedAt = new Date().toISOString();
-      setWorkshopState(draft);
+      setWorkshopState(draft, options);
       return result;
     },
     [currentUser?.id, state],
@@ -509,8 +555,7 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
 
   const resetDemoData = useCallback(() => {
     const next = createSeedState();
-    setWorkshopState(next);
-    void syncToSupabase(next);
+    setWorkshopState(next, { syncImmediately: true });
     toast.success("Base inicial enviada ao Supabase.");
   }, []);
 
@@ -519,41 +564,44 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
       ensurePermission(currentUser, "customers:write");
       const parsed = customerSchema.parse(input);
 
-      return commit((draft, userId) => {
-        const existing = findCustomerByCpf(draft, parsed.cpf);
-        const now = new Date().toISOString();
+      return commit(
+        (draft, userId) => {
+          const existing = findCustomerByCpf(draft, parsed.cpf);
+          const now = new Date().toISOString();
 
-        if (existing) {
-          const before = cloneState(draft).customers.find((customer) => customer.id === existing.id);
-          Object.assign(existing, {
+          if (existing) {
+            const before = cloneState(draft).customers.find((customer) => customer.id === existing.id);
+            Object.assign(existing, {
+              name: parsed.name,
+              phone: parsed.phone,
+              email: parsed.noEmail ? "" : parsed.email,
+              noEmail: parsed.noEmail,
+              address: parsed.address,
+              district: parsed.district,
+              updatedAt: now,
+            });
+            pushAudit(draft, userId, "customer", existing.id, "updated", `Cliente ${existing.name} atualizado.`, before, existing);
+            return { customer: existing, created: false };
+          }
+
+          const customer: Customer = {
+            id: newId("customer"),
+            cpf: parsed.cpf,
             name: parsed.name,
             phone: parsed.phone,
             email: parsed.noEmail ? "" : parsed.email,
             noEmail: parsed.noEmail,
             address: parsed.address,
             district: parsed.district,
+            createdAt: now,
             updatedAt: now,
-          });
-          pushAudit(draft, userId, "customer", existing.id, "updated", `Cliente ${existing.name} atualizado.`, before, existing);
-          return { customer: existing, created: false };
-        }
-
-        const customer: Customer = {
-          id: newId("customer"),
-          cpf: parsed.cpf,
-          name: parsed.name,
-          phone: parsed.phone,
-          email: parsed.noEmail ? "" : parsed.email,
-          noEmail: parsed.noEmail,
-          address: parsed.address,
-          district: parsed.district,
-          createdAt: now,
-          updatedAt: now,
-        };
-        draft.customers.unshift(customer);
-        pushAudit(draft, userId, "customer", customer.id, "created", `Cliente ${customer.name} criado.`, undefined, customer);
-        return { customer, created: true };
-      });
+          };
+          draft.customers.unshift(customer);
+          pushAudit(draft, userId, "customer", customer.id, "created", `Cliente ${customer.name} criado.`, undefined, customer);
+          return { customer, created: true };
+        },
+        { syncImmediately: true },
+      );
     },
     [commit, currentUser],
   );
@@ -564,27 +612,23 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
       commit((draft, userId) => {
         const customer = draft.customers.find((item) => item.id === customerId && !item.deletedAt);
         if (!customer) throw new Error("Cliente nao encontrado.");
-        const now = new Date().toISOString();
         const before = { ...customer };
-        customer.deletedAt = now;
-        customer.updatedAt = now;
+        const orderIds = new Set(draft.orders.filter((order) => order.customerId === customerId).map((order) => order.id));
+        const vehicleIds = new Set(draft.vehicles.filter((vehicle) => vehicle.customerId === customerId).map((vehicle) => vehicle.id));
 
-        draft.vehicles
-          .filter((vehicle) => vehicle.customerId === customerId && !vehicle.deletedAt)
-          .forEach((vehicle) => {
-            vehicle.deletedAt = now;
-            vehicle.updatedAt = now;
-          });
-
-        draft.orders
-          .filter((order) => order.customerId === customerId && !order.deletedAt)
-          .forEach((order) => {
-            order.status = "cancelled";
-            order.paymentStatus = "cancelled";
-            order.deletedAt = now;
-            order.updatedAt = now;
-            order.version += 1;
-          });
+        draft.customers = draft.customers.filter((item) => item.id !== customerId);
+        draft.vehicles = draft.vehicles.filter((vehicle) => !vehicleIds.has(vehicle.id));
+        draft.orders = draft.orders.filter((order) => !orderIds.has(order.id));
+        draft.orderItems = draft.orderItems.filter((item) => !orderIds.has(item.orderId));
+        draft.inspectionItems = draft.inspectionItems.filter((item) => !orderIds.has(item.orderId));
+        draft.photos = draft.photos.filter((photo) => !orderIds.has(photo.orderId));
+        draft.quoteRevisions = draft.quoteRevisions.filter((revision) => !orderIds.has(revision.orderId));
+        draft.payments = draft.payments.filter((payment) => !orderIds.has(payment.orderId));
+        draft.documents = draft.documents.filter((document) => !orderIds.has(document.orderId));
+        draft.mileageRecords = draft.mileageRecords.filter((record) => !vehicleIds.has(record.vehicleId) && !orderIds.has(record.orderId ?? ""));
+        draft.reminders = draft.reminders.filter(
+          (reminder) => reminder.customerId !== customerId && !vehicleIds.has(reminder.vehicleId) && !orderIds.has(reminder.orderId ?? ""),
+        );
 
         pushAudit(draft, userId, "customer", customer.id, "cancelled", `Cliente ${customer.name} excluido.`, before, customer);
       });
@@ -644,7 +688,7 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
         draft.vehicles.unshift(vehicle);
         pushAudit(draft, userId, "vehicle", vehicle.id, "created", `Veículo ${vehicle.plate} criado.`, undefined, vehicle);
         return { vehicle, created: true };
-      });
+      }, { syncImmediately: true });
     },
     [commit, currentUser],
   );
@@ -699,7 +743,7 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
         draft.processedOperationKeys.push(idempotencyKey);
         pushAudit(draft, userId, "order", order.id, "created", `OS ${order.number} criada.`, undefined, order);
         return order;
-      });
+      }, { syncImmediately: true });
     },
     [commit, currentUser],
   );
@@ -723,15 +767,18 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
     (orderId) => {
       ensurePermission(currentUser, "orders:approve");
       commit((draft, userId) => {
-        const order = draft.orders.find((item) => item.id === orderId);
+        const order = draft.orders.find((item) => item.id === orderId && !item.deletedAt);
         if (!order) throw new Error("OS nao encontrada.");
         const before = { ...order };
-        const now = new Date().toISOString();
-        order.status = "cancelled";
-        order.paymentStatus = "cancelled";
-        order.deletedAt = now;
-        order.updatedAt = now;
-        order.version += 1;
+        draft.orders = draft.orders.filter((item) => item.id !== orderId);
+        draft.orderItems = draft.orderItems.filter((item) => item.orderId !== orderId);
+        draft.inspectionItems = draft.inspectionItems.filter((item) => item.orderId !== orderId);
+        draft.photos = draft.photos.filter((photo) => photo.orderId !== orderId);
+        draft.quoteRevisions = draft.quoteRevisions.filter((revision) => revision.orderId !== orderId);
+        draft.payments = draft.payments.filter((payment) => payment.orderId !== orderId);
+        draft.documents = draft.documents.filter((document) => document.orderId !== orderId);
+        draft.mileageRecords = draft.mileageRecords.filter((record) => record.orderId !== orderId);
+        draft.reminders = draft.reminders.filter((reminder) => reminder.orderId !== orderId);
         pushAudit(draft, userId, "order", order.id, "cancelled", `OS ${order.number} excluida.`, before, order);
       });
     },
@@ -797,7 +844,7 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
           id: photo.id,
           label: photo.label,
         });
-      });
+      }, { syncImmediately: true });
     },
     [commit, currentUser],
   );
@@ -810,7 +857,7 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
         if (!photo) return;
         draft.photos = draft.photos.filter((item) => item.id !== photoId);
         pushAudit(draft, userId, "photo", photo.id, "cancelled", `Foto removida da OS.`, photo, undefined);
-      });
+      }, { syncImmediately: true });
     },
     [commit, currentUser],
   );
@@ -837,7 +884,7 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
         updatePaymentStatus(draft, orderId);
         pushAudit(draft, userId, "order_item", item.id, "created", `Item adicionado à OS ${order.number}.`, undefined, item);
         return item;
-      });
+      }, { syncImmediately: true });
     },
     [commit, currentUser],
   );
@@ -937,7 +984,7 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
         order.version += 1;
         pushAudit(draft, userId, "quote_revision", revision.id, "created", `Revisão ${version} da OS ${order.number} criada.`, undefined, revision);
         return revision;
-      });
+      }, { syncImmediately: true });
     },
     [commit, currentUser],
   );
@@ -960,7 +1007,7 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
         order.version += 1;
         pushAudit(draft, userId, "quote_revision", revision.id, "approved", `Orçamento ${revision.version} aprovado.`, before, revision);
         return revision;
-      });
+      }, { syncImmediately: true });
     },
     [commit, currentUser],
   );
@@ -996,7 +1043,7 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
         updatePaymentStatus(draft, orderId);
         pushAudit(draft, userId, "payment", payment.id, "payment_received", `Pagamento registrado na OS ${order.number}.`, undefined, payment);
         return payment;
-      });
+      }, { syncImmediately: true });
     },
     [commit, currentUser],
   );
@@ -1030,7 +1077,7 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
         draft.processedOperationKeys.push(idempotencyKey);
         pushAudit(draft, userId, "document", document.id, "document_generated", `Documento ${document.type} gerado para ${order.number}.`, undefined, document);
         return document;
-      });
+      }, { syncImmediately: true });
     },
     [commit, currentUser],
   );
@@ -1114,7 +1161,7 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
         draft.processedOperationKeys.push(idempotencyKey);
         pushAudit(draft, userId, "document", document.id, "document_generated", `Documento final gerado para ${order.number}.`, undefined, document);
         return document;
-      });
+      }, { syncImmediately: true });
     },
     [commit, currentUser],
   );
@@ -1159,7 +1206,6 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
     [commit, currentUser],
   );
 
-  const { syncStatus } = snapshot;
 
   const value = useMemo<StoreContextValue>(
     () => ({

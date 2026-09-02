@@ -1640,7 +1640,7 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
                     <div>
                       <p className="font-black text-rose-950">Excluir esta OS?</p>
                       <p className="mt-1 text-sm font-medium text-rose-700">
-                        Ela sera marcada como excluida e removida das listas principais.
+                        Ela sera removida com itens, pagamentos, documentos e anexos vinculados.
                       </p>
                     </div>
                   </div>
@@ -3626,11 +3626,30 @@ function HistoryView({ onOpenOrder }: { onOpenOrder: (orderId: string) => void }
 function SettingsView() {
   const { state, currentUser, syncStatus, forceSync } = useWorkshop();
   const [notifPermission, setNotifPermission] = useState<PermissionState>("unsupported");
+  const [dbStatus, setDbStatus] = useState<{ configured: boolean; tableExists: boolean; serverReady: boolean } | null>(null);
 
   useEffect(() => {
     const id = window.setTimeout(() => setNotifPermission(getNotificationPermission()), 0);
     return () => window.clearTimeout(id);
   }, []);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const [health, setup] = await Promise.all([
+          fetch("/api/health", { cache: "no-store" }).then((r) => r.json()),
+          fetch("/api/workshop/setup", { cache: "no-store" }).then((r) => r.json()),
+        ]);
+        setDbStatus({
+          configured: Boolean(setup.configured),
+          tableExists: Boolean(setup.tableExists),
+          serverReady: Boolean(health.supabaseConfigured),
+        });
+      } catch {
+        setDbStatus({ configured: false, tableExists: false, serverReady: false });
+      }
+    })();
+  }, [syncStatus]);
 
   async function handleToggleNotifications() {
     const result = await requestNotificationPermission();
@@ -3643,7 +3662,8 @@ function SettingsView() {
   }
 
   if (!state || !currentUser) return null;
-  const supabaseConfigured = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+  const supabaseConfigured = dbStatus?.serverReady ?? false;
+  const tableReady = dbStatus?.tableExists ?? false;
   const openReminders = state.reminders.filter((r) => r.status === "open" && r.dueDate);
 
   const syncLabel = {
@@ -3668,7 +3688,22 @@ function SettingsView() {
         <div className="mt-3 grid gap-2">
           <InfoRow label="Usuário" value={currentUser.username} />
           <InfoRow label="Perfil" value={ROLE_LABEL[currentUser.role]} />
-          <InfoRow label="Supabase" value={supabaseConfigured ? "Configurado" : "Aguardando .env"} />
+          <InfoRow
+            label="Supabase"
+            value={
+              !dbStatus
+                ? "Verificando..."
+                : supabaseConfigured && tableReady
+                  ? "Conectado"
+                  : supabaseConfigured
+                    ? "Conectado — tabela ausente"
+                    : "SUPABASE_SERVICE_ROLE_KEY ausente"
+            }
+          />
+          <InfoRow label="Clientes no banco" value={String(state.customers.length)} />
+          <InfoRow label="Veículos no banco" value={String(state.vehicles.length)} />
+          <InfoRow label="OS no banco" value={String(state.orders.length)} />
+          <InfoRow label="Fotos no banco" value={String(state.photos.length)} />
           <InfoRow label="Fiscal" value={state.fiscalIntegration.status === "ready" ? "Pronto" : "Não configurado"} />
         </div>
       </section>
@@ -3679,16 +3714,31 @@ function SettingsView() {
           <Badge variant={syncVariant}>{syncLabel}</Badge>
         </div>
         <p className="mt-2 text-sm text-zinc-500">
-          Dados são salvos automaticamente no Supabase a cada alteração.
+          Dados são salvos automaticamente no Supabase — tabelas SQL (customers, vehicles, service_orders, photos, payments, documents…) e snapshot JSON completo com fotos em base64.
         </p>
-        {supabaseConfigured && syncStatus === "synced" && (
+        {supabaseConfigured && tableReady && syncStatus === "synced" && (
           <div className="mt-3 rounded-lg bg-emerald-50 p-3">
             <p className="text-sm font-semibold text-emerald-700">
               Todos os dados estao sincronizados com o banco de dados.
             </p>
           </div>
         )}
-        {supabaseConfigured && syncStatus === "table_missing" && (
+        {supabaseConfigured && !tableReady && (
+          <div className="mt-3 space-y-3">
+            <div className="rounded-lg bg-amber-50 p-3">
+              <p className="text-sm font-semibold text-amber-700">
+                Tabela workshop_app_snapshots nao existe no Supabase.
+              </p>
+              <p className="mt-1 text-xs text-amber-600">
+                Abra o SQL Editor no Supabase e execute o SQLFINAL.sql do repositorio.
+              </p>
+            </div>
+            <Button type="button" className="w-full" onClick={forceSync}>
+              Tentar sincronizar novamente
+            </Button>
+          </div>
+        )}
+        {tableReady && syncStatus === "table_missing" && (
           <div className="mt-3 space-y-3">
             <div className="rounded-lg bg-amber-50 p-3">
               <p className="text-sm font-semibold text-amber-700">
@@ -3723,7 +3773,8 @@ function SettingsView() {
         {!supabaseConfigured && (
           <div className="mt-3 rounded-lg bg-zinc-50 p-3">
             <p className="text-sm text-zinc-500">
-              Configure NEXT_PUBLIC_SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no Vercel para ativar a persistência remota.
+              Configure NEXT_PUBLIC_SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no arquivo .env (local) ou no Vercel (producao).
+              A chave anon sozinha nao salva dados — e necessaria a service role key no servidor.
             </p>
           </div>
         )}
