@@ -1,17 +1,20 @@
-import type { ReactNode } from "react";
-import { fetchEntitlement } from "@/lib/flowdesk/client";
-import { FlowdeskBlockedScreen } from "./blocked-screen";
-
-/**
- * Envolve a aplicação e substitui todo o conteúdo pela tela de bloqueio quando
- * o FlowDesk sinaliza inadimplência. Falhas de rede liberam o acesso.
- */
-export async function FlowdeskAccessGate({ children }: { children: ReactNode }) {
-  const result = await fetchEntitlement();
-
-  if (!result.allowed) {
-    return <FlowdeskBlockedScreen entitlement={result.entitlement} />;
-  }
-
-  return <>{children}</>;
-}
+import type { ReactNode } from "react";
+import { unstable_noStore as noStore } from "next/cache";
+import { fetchEntitlement } from "@/lib/flowdesk/client";
+import { FlowdeskBlockedScreen } from "./blocked-screen";
+import { FlowdeskLiveMonitor } from "./live-monitor";
+
+/**
+ * Checagem inicial no servidor + monitoramento contínuo no cliente (sem F5).
+ */
+export async function FlowdeskAccessGate({ children }: { children: ReactNode }) {
+  noStore();
+  const result = await fetchEntitlement({ fresh: true });
+
+  if (!result.allowed && !result.degraded) {
+    return <FlowdeskBlockedScreen entitlement={result.entitlement} />;
+  }
+
+  return <FlowdeskLiveMonitor>{children}</FlowdeskLiveMonitor>;
+}
+

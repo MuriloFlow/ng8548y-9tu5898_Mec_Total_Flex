@@ -37,6 +37,7 @@ export interface Entitlement {
   blocked: boolean;
   blocked_reason: string | null;
   blocked_at: string | null;
+  block_type?: "payment" | "manual" | "suspended" | null;
   grace_days: number;
   customer: { id: string; name: string; email: string | null };
   open_invoices: number;
