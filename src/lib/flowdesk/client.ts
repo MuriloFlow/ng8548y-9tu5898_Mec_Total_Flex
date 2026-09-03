@@ -19,6 +19,22 @@ export function flowdeskBaseUrl(): string {
   return (process.env.FLOWDESK_API_URL ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
 }
 
+function explainFlowdeskHttpError(status: number, body: string): string {
+  if (status === 401) {
+    return "Chave FlowDesk inválida. Gere uma nova em FlowDesk → Credenciais → Nova chave.";
+  }
+
+  const vercelMissing =
+    body.includes("deployment could not be found") ||
+    body.includes("DEPLOYMENT_NOT_FOUND");
+
+  if (status === 404 && vercelMissing) {
+    return `FLOWDESK_API_URL incorreta (${flowdeskBaseUrl()}). Use https://flowdeskbrasil.vercel.app (com "i" em brasil).`;
+  }
+
+  return `FlowDesk respondeu ${status}: ${body.slice(0, 160)}`;
+}
+
 export function isFlowdeskConfigured(): boolean {
   return Boolean(process.env.FLOWDESK_SECRET_KEY?.trim());
 }
@@ -94,19 +110,20 @@ export async function fetchEntitlement(options?: { fresh?: boolean }): Promise<E
     const response = await requestEntitlement(controller.signal);
 
     if (!response.ok) {
+      const body = await response.text().catch(() => "");
+
       if (response.status === 401) {
         return {
           ...ALLOW,
           degraded: true,
-          error: "Chave FlowDesk inválida. Gere uma nova em Credenciais → Nova chave.",
+          error: explainFlowdeskHttpError(401, body),
         };
       }
 
-      const body = await response.text().catch(() => "");
       const result: EntitlementResult = {
         ...ALLOW,
         degraded: true,
-        error: `FlowDesk respondeu ${response.status}: ${body.slice(0, 160)}`,
+        error: explainFlowdeskHttpError(response.status, body),
       };
       writeEntitlementCache(result, 5_000);
       return result;
