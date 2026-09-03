@@ -182,7 +182,7 @@ export function VehicleIdentityFields({ values, onChange, errors = {} }: Props) 
                 type="button"
                 onClick={() => handleCategory(item.id)}
                 className={cn(
-                  "flex flex-col items-center gap-1 rounded-lg border px-1 py-2.5 text-[11px] font-medium transition",
+                  "flex flex-col items-center gap-1 rounded-xl border px-1 py-2.5 text-[11px] font-medium transition",
                   active
                     ? "border-zinc-900 bg-zinc-900 text-white"
                     : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300",

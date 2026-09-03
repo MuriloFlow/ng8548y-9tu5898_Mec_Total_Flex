@@ -133,11 +133,13 @@ export function Combobox({
         disabled={disabled}
         onClick={() => setOpen((current) => !current)}
         className={cn(
-          "flex h-12 w-full items-center justify-between gap-2 rounded-lg border bg-white px-4 text-left text-base shadow-sm outline-none transition",
-          "focus:border-zinc-900 focus:ring-4 focus:ring-zinc-100",
+          "flex h-12 w-full items-center justify-between gap-2 rounded-xl bg-white px-3.5 text-left text-base",
+          "outline-none transition-[box-shadow] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]",
           "disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:opacity-60",
-          invalid ? "border-rose-400" : "border-zinc-200",
-          open && "border-zinc-900 ring-4 ring-zinc-100",
+          invalid
+            ? "shadow-[0_1px_2px_rgba(190,18,60,0.06),inset_0_0_0_1.5px_rgb(244,63,94)]"
+            : "shadow-[0_1px_2px_rgba(24,24,27,0.04),inset_0_0_0_1px_rgba(24,24,27,0.11)] hover:shadow-[0_1px_2px_rgba(24,24,27,0.05),inset_0_0_0_1px_rgba(24,24,27,0.18)]",
+          open && "shadow-[0_0_0_3.5px_rgba(24,24,27,0.09),inset_0_0_0_1.5px_rgb(24,24,27)]",
         )}
       >
         <span className={cn("truncate", displayLabel ? "text-zinc-950" : "text-zinc-400")}>

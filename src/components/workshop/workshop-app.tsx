@@ -50,6 +50,7 @@ import {
   UsersRound,
   Wallet,
   Wrench,
+  X,
 } from "lucide-react";
 import { ZodError } from "zod";
 import { toast, Toaster } from "sonner";
@@ -57,6 +58,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Pressable } from "@/components/ui/pressable";
+import { Segmented } from "@/components/ui/segmented";
+import { haptic } from "@/lib/ui/haptics";
+import { pageVariants, popIn, springSmooth, springSnappy, staggerContainer, staggerItem } from "@/lib/ui/motion";
 import {
   Sheet,
   SheetContent,
@@ -133,7 +138,7 @@ type BadgeVariant = "default" | "muted" | "success" | "warning" | "danger" | "in
 type FinanceTab = "extract" | "pending" | "receipts";
 type FinanceTransaction = {
   id: string;
-  type: "Entrada" | "Saida" | "Pendente";
+  type: "Entrada" | "Saída" | "Pendente";
   title: string;
   detail: string;
   amount: number;
@@ -144,10 +149,10 @@ type FinanceTransaction = {
 };
 
 const selectClass =
-  "h-12 w-full rounded-lg border border-zinc-200 bg-white px-4 text-base text-zinc-950 shadow-sm outline-none transition focus:border-zinc-900 focus:ring-4 focus:ring-zinc-100";
+  "h-12 w-full appearance-none rounded-xl bg-white px-3.5 text-base text-zinc-950 outline-none transition-[box-shadow] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] shadow-[0_1px_2px_rgba(24,24,27,0.04),inset_0_0_0_1px_rgba(24,24,27,0.11)] hover:shadow-[0_1px_2px_rgba(24,24,27,0.05),inset_0_0_0_1px_rgba(24,24,27,0.18)] focus:shadow-[0_0_0_3.5px_rgba(24,24,27,0.09),inset_0_0_0_1.5px_rgb(24,24,27)]";
 
 const tabs: Array<{ id: ViewId; label: string; icon: typeof Home }> = [
-  { id: "home", label: "Inicio", icon: Home },
+  { id: "home", label: "Início", icon: Home },
   { id: "orders", label: "OS", icon: ClipboardCheck },
   { id: "customers", label: "Clientes", icon: UsersRound },
   { id: "finance", label: "Financeiro", icon: CircleDollarSign },
@@ -155,11 +160,11 @@ const tabs: Array<{ id: ViewId; label: string; icon: typeof Home }> = [
 ];
 
 const mobileTabs: Array<{ id: ViewId; label: string; icon: typeof Home }> = [
-  { id: "home", label: "Inicio", icon: Home },
+  { id: "home", label: "Início", icon: Home },
   { id: "orders", label: "OS", icon: ClipboardCheck },
   { id: "customers", label: "Clientes", icon: UsersRound },
   { id: "finance", label: "Faturamento", icon: Landmark },
-  { id: "history", label: "Historico", icon: Clock },
+  { id: "history", label: "Histórico", icon: Clock },
   { id: "settings", label: "Menu", icon: Menu },
 ];
 
@@ -176,6 +181,26 @@ function viewFromPath(pathname: string): ViewId {
   const match = (Object.entries(viewPath) as Array<[ViewId, string]>).find(([, path]) => path !== "/" && pathname.startsWith(path));
   return match?.[0] ?? "home";
 }
+
+/** Ordem visual das abas, usada para decidir o sentido da transição de tela. */
+const NAV_ORDER: ViewId[] = ["home", "orders", "customers", "finance", "history", "settings"];
+
+/**
+ * Sentido da troca de tela: avançar na ordem das abas entra pela direita,
+ * voltar entra pela esquerda. É o que dá a sensação de pilha de navegação em
+ * vez de telas trocando aleatoriamente.
+ */
+function useNavDirection(view: ViewId): 1 | -1 {
+  const [tracked, setTracked] = useState<{ view: ViewId; direction: 1 | -1 }>({ view, direction: 1 });
+
+  if (tracked.view !== view) {
+    const from = NAV_ORDER.indexOf(tracked.view);
+    const to = NAV_ORDER.indexOf(view);
+    setTracked({ view, direction: to >= from ? 1 : -1 });
+  }
+
+  return tracked.direction;
+}
 function errorMessage(error: unknown) {
   if (error instanceof ZodError) return error.issues[0]?.message ?? "Dados inválidos.";
   if (error instanceof Error) return error.message;
@@ -191,12 +216,17 @@ function fieldErrors(error: unknown) {
   }, {});
 }
 
+/* O contorno dos campos é uma sombra interna, não `border`, para o anel de foco
+   crescer por fora sem mudar a altura. O estado de erro segue a mesma técnica. */
+const invalidFieldShadow =
+  "bg-rose-50/50 text-rose-950 shadow-[0_1px_2px_rgba(190,18,60,0.06),inset_0_0_0_1.5px_rgb(244,63,94)] hover:shadow-[0_1px_2px_rgba(190,18,60,0.08),inset_0_0_0_1.5px_rgb(225,29,72)] focus:shadow-[0_0_0_3.5px_rgba(244,63,94,0.16),inset_0_0_0_1.5px_rgb(225,29,72)]";
+
 function invalidFieldClass(error?: string) {
-  return error ? "border-rose-500 bg-rose-50/60 text-rose-950 focus:border-rose-600 focus:ring-rose-100" : undefined;
+  return error ? invalidFieldShadow : undefined;
 }
 
 function selectFieldClass(error?: string) {
-  return `${selectClass} ${error ? "border-rose-500 bg-rose-50/60 text-rose-950 focus:border-rose-600 focus:ring-rose-100" : ""}`;
+  return `${selectClass} ${error ? invalidFieldShadow : ""}`;
 }
 
 function badgeForOrder(status: OrderStatus): BadgeVariant {
@@ -245,7 +275,29 @@ function useDraftState<T extends Record<string, unknown>>(key: string, initialVa
 export function WorkshopApp() {
   return (
     <WorkshopProvider>
-      <Toaster position="top-center" richColors closeButton />
+      {/* `top-center` porque no mobile a base da tela é ocupada pelo dock e pelo
+          teclado. O offset acompanha a área segura do notch. */}
+      <Toaster
+        position="top-center"
+        offset="calc(env(safe-area-inset-top) + 12px)"
+        gap={8}
+        duration={3200}
+        toastOptions={{
+          classNames: {
+            toast:
+              "!rounded-2xl !border-0 !bg-white !shadow-float !px-4 !py-3.5 !gap-3 !font-sans",
+            title: "!text-[14px] !font-semibold !tracking-[-0.01em] !text-zinc-950",
+            description: "!text-[13px] !leading-5 !text-zinc-500",
+            actionButton: "!rounded-full !bg-zinc-950 !text-white !text-[13px] !font-semibold",
+            cancelButton: "!rounded-full !bg-zinc-100 !text-zinc-700 !text-[13px] !font-semibold",
+            closeButton: "!rounded-full !border-0 !bg-zinc-100 !text-zinc-500",
+            success: "!text-emerald-600",
+            error: "!text-rose-600",
+            warning: "!text-amber-600",
+            info: "!text-sky-600",
+          },
+        }}
+      />
       <WorkshopRuntime />
     </WorkshopProvider>
   );
@@ -462,6 +514,7 @@ function WorkspaceShell() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const view = viewFromPath(pathname);
+  const navDirection = useNavDirection(view);
   const search = searchParams.toString();
   const [customerSheetOpen, setCustomerSheetOpen] = useState(false);
   const [orderSheetOpen, setOrderSheetOpen] = useState(false);
@@ -509,8 +562,8 @@ function WorkspaceShell() {
   }
 
   return (
-    <main className="min-h-dvh bg-[#f5f6f8] text-zinc-950 lg:flex">
-      <aside className="hidden lg:flex lg:w-[272px] lg:shrink-0 lg:flex-col lg:border-r lg:border-zinc-200 lg:bg-white">
+    <main className="min-h-dvh bg-surface-app text-zinc-950 lg:flex">
+      <aside className="hidden lg:flex lg:w-[272px] lg:shrink-0 lg:flex-col lg:border-r lg:border-zinc-200/80 lg:bg-white">
         <div className="flex items-center gap-3 border-b border-zinc-100 px-6 py-6">
           <BrandLogoInline className="h-9" />
           <div>
@@ -519,69 +572,81 @@ function WorkspaceShell() {
           </div>
         </div>
 
-        <nav className="flex-1 space-y-1 px-4 py-5">
+        <nav className="flex-1 space-y-0.5 px-3 py-5">
           {[...tabs, { id: "settings" as ViewId, label: "Ajustes", icon: Settings }].map((tab) => {
+            const active = view === tab.id;
             const Icon = tab.icon;
             return (
               <button
                 key={tab.id}
                 type="button"
                 onClick={() => navigateTo(tab.id)}
-                className={`flex h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-semibold transition ${
-                  view === tab.id ? "bg-zinc-950 text-white" : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-950"
+                className={`relative flex h-10 w-full items-center gap-3 rounded-[10px] px-3 text-sm font-medium transition-colors duration-200 ${
+                  active ? "text-zinc-950" : "text-zinc-500 hover:bg-zinc-100/70 hover:text-zinc-900"
                 }`}
               >
-                <Icon className="size-4" />
-                {tab.label}
+                {active ? (
+                  <motion.span
+                    layoutId="desktop-nav-active"
+                    className="absolute inset-0 rounded-[10px] bg-zinc-100"
+                    transition={springSnappy}
+                  />
+                ) : null}
+                <Icon className={`relative size-[17px] ${active ? "text-zinc-950" : "text-zinc-400"}`} />
+                <span className="relative">{tab.label}</span>
               </button>
             );
           })}
         </nav>
 
-        <div className="space-y-2 border-t border-zinc-100 px-4 py-5">
-          <Button type="button" className="h-11 w-full rounded-xl" onClick={() => setCustomerSheetOpen(true)}>
+        <div className="space-y-2 border-t border-zinc-100 px-3 py-4">
+          <Button type="button" className="h-10 w-full rounded-[10px]" onClick={() => setCustomerSheetOpen(true)}>
             <Plus className="size-4" /> Novo cliente
           </Button>
-          <Button type="button" variant="outline" className="h-11 w-full rounded-xl" onClick={openOrderFlow}>
+          <Button type="button" variant="outline" className="h-10 w-full rounded-[10px]" onClick={openOrderFlow}>
             <FilePlus2 className="size-4" /> Nova OS
           </Button>
         </div>
       </aside>
 
       <div className="w-full lg:flex lg:min-h-dvh lg:flex-1 lg:flex-col">
-        <section className="mx-auto flex min-h-dvh w-full max-w-xl flex-col overflow-x-hidden bg-white shadow-sm lg:mx-0 lg:max-w-none lg:min-h-dvh lg:min-w-0 lg:flex-1 lg:bg-transparent lg:shadow-none">
-          <header className="sticky top-0 z-30 border-b border-zinc-200 bg-white/90 px-4 py-3 backdrop-blur-xl lg:bg-[#f5f6f8]/90">
+        <section className="mx-auto flex min-h-dvh w-full max-w-xl flex-col overflow-x-hidden bg-white lg:mx-0 lg:max-w-none lg:min-h-dvh lg:min-w-0 lg:flex-1 lg:bg-transparent">
+          {/* A saturação extra no blur mantém as cores vivas sob a barra
+              translúcida, como nas barras de navegação do iOS. */}
+          <header className="safe-top sticky top-0 z-30 border-b border-zinc-200/70 bg-white/80 px-4 pb-3 pt-3 backdrop-blur-xl backdrop-saturate-150 lg:bg-surface-app/80">
             <div className="lg:mx-auto lg:max-w-5xl">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-3">
                   <button
                     type="button"
                     onClick={() => navigateTo("settings")}
-                    className="grid size-10 shrink-0 place-items-center rounded-full bg-white text-zinc-800 shadow-sm ring-1 ring-zinc-200 transition active:scale-95 lg:hidden"
+                    className="press grid size-9 shrink-0 place-items-center rounded-full bg-white text-zinc-700 shadow-[0_1px_2px_rgba(24,24,27,0.06),inset_0_0_0_1px_rgba(24,24,27,0.09)] lg:hidden"
                     title="Menu"
                   >
-                    <UserRound className="size-5" />
+                    <UserRound className="size-[18px]" />
                   </button>
                   <div className="min-w-0">
-                    <p className="text-xs font-bold uppercase text-zinc-400 lg:hidden">Total Flex</p>
-                    <h1 className="truncate text-lg font-black tracking-tight">
-                      {view === "home" ? "Inicio" : tabs.find((tab) => tab.id === view)?.label ?? "Menu"}
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-400 lg:hidden">
+                      Total Flex
+                    </p>
+                    <h1 className="truncate text-[22px] font-semibold leading-tight tracking-[-0.025em]">
+                      {view === "home" ? "Início" : tabs.find((tab) => tab.id === view)?.label ?? "Menu"}
                     </h1>
                   </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="flex shrink-0 items-center gap-1.5">
                   <div className="hidden items-center gap-2 lg:flex">
-                    <Button type="button" size="sm" className="rounded-xl" onClick={() => setCustomerSheetOpen(true)}>
+                    <Button type="button" size="sm" className="rounded-[10px]" onClick={() => setCustomerSheetOpen(true)}>
                       <Plus className="size-4" /> Cliente
                     </Button>
-                    <Button type="button" size="sm" variant="outline" className="rounded-xl" onClick={openOrderFlow}>
+                    <Button type="button" size="sm" variant="outline" className="rounded-[10px]" onClick={openOrderFlow}>
                       <FilePlus2 className="size-4" /> Nova OS
                     </Button>
                   </div>
-                  <Button type="button" variant="ghost" size="icon" onClick={() => navigateTo("history")} title="Alertas">
+                  <Button type="button" variant="ghost" size="icon" className="size-9" onClick={() => navigateTo("history")} title="Alertas">
                     <Bell />
                   </Button>
-                  <Button type="button" variant="ghost" size="icon" onClick={logout} title="Sair">
+                  <Button type="button" variant="ghost" size="icon" className="size-9" onClick={logout} title="Sair">
                     <LogOut />
                   </Button>
                 </div>
@@ -590,15 +655,15 @@ function WorkspaceShell() {
             </div>
           </header>
 
-          <div className="flex-1 px-4 pb-28 pt-4 lg:px-8 lg:pb-8">
+          <div className="flex-1 px-4 pb-32 pt-5 lg:px-8 lg:pb-8">
             <div className="lg:mx-auto lg:max-w-5xl">
-              <AnimatePresence mode="wait">
+              <AnimatePresence mode="wait" initial={false}>
                 <motion.div
                   key={view}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -8 }}
-                  transition={{ duration: 0.18 }}
+                  variants={pageVariants(navDirection)}
+                  initial="hidden"
+                  animate="visible"
+                  exit="exit"
                 >
                   {view === "home" ? (
                     <HomeView
@@ -639,19 +704,31 @@ function WorkspaceShell() {
             </div>
           </div>
 
-          <nav className="fixed inset-x-0 bottom-0 z-40 mx-auto max-w-xl px-3 pb-[calc(env(safe-area-inset-bottom)+12px)] lg:hidden">
-            <div className="relative grid h-[76px] grid-cols-7 items-center rounded-[28px] border border-zinc-200/80 bg-white/92 px-2 shadow-[0_-10px_34px_rgba(24,24,27,0.14)] backdrop-blur-xl">
+          {/* Gradiente atrás do dock: o conteúdo rolando some suavemente por
+              baixo da barra em vez de ser cortado numa linha reta. */}
+          <div className="pointer-events-none fixed inset-x-0 bottom-0 z-30 h-32 bg-gradient-to-t from-surface-app via-surface-app/85 to-transparent lg:hidden" />
+
+          <nav className="fixed inset-x-0 bottom-0 z-40 mx-auto max-w-xl px-4 pb-[calc(env(safe-area-inset-bottom)+10px)] lg:hidden">
+            <div className="relative grid grid-cols-7 items-end rounded-[24px] bg-white/85 px-1.5 pb-2 pt-2.5 shadow-[0_0_0_1px_rgba(24,24,27,0.06),0_-1px_0_rgba(255,255,255,0.9)_inset,0_16px_40px_-12px_rgba(24,24,27,0.22)] backdrop-blur-2xl backdrop-saturate-150">
               {mobileTabs.slice(0, 3).map((tab) => (
                 <MobileNavButton key={tab.id} tab={tab} active={view === tab.id} onClick={() => navigateTo(tab.id)} />
               ))}
-              <button
-                type="button"
-                onClick={() => setCustomerSheetOpen(true)}
-                className="mx-auto grid size-16 -translate-y-6 place-items-center rounded-full bg-zinc-950 text-white shadow-2xl shadow-zinc-950/30 ring-8 ring-[#f5f6f8] transition duration-200 hover:-translate-y-7 active:scale-95"
-                title="Buscar cliente"
-              >
-                <Plus className="size-7" />
-              </button>
+
+              <div className="relative">
+                <motion.button
+                  type="button"
+                  onPointerDown={() => haptic("select")}
+                  onClick={() => setCustomerSheetOpen(true)}
+                  whileTap={{ scale: 0.92 }}
+                  transition={springSnappy}
+                  className="absolute -top-8 left-1/2 grid size-14 -translate-x-1/2 place-items-center rounded-full bg-gradient-to-b from-zinc-800 to-zinc-950 text-white shadow-[0_1px_0_rgba(255,255,255,0.14)_inset,0_8px_24px_-6px_rgba(24,24,27,0.55)] ring-[5px] ring-white/70"
+                  title="Novo cliente"
+                  aria-label="Novo cliente"
+                >
+                  <Plus className="size-6" strokeWidth={2.4} />
+                </motion.button>
+              </div>
+
               {mobileTabs.slice(3).map((tab) => (
                 <MobileNavButton key={tab.id} tab={tab} active={view === tab.id} onClick={() => navigateTo(tab.id)} />
               ))}
@@ -692,37 +769,59 @@ function GlobalSearchBox({
 
   return (
     <div className="relative mt-3 w-full min-w-0">
-      <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
+      <Search className="pointer-events-none absolute left-3.5 top-1/2 z-10 size-[17px] -translate-y-1/2 text-zinc-400" />
       <Input
         value={query}
         onChange={(event) => setQuery(event.target.value)}
         placeholder="Buscar CPF, nome, placa ou OS"
-        className="w-full max-w-full pl-10"
+        className="h-11 w-full max-w-full bg-zinc-100/70 pl-10 text-[15px] shadow-none focus:bg-white"
         inputMode="search"
       />
-      {results.length ? (
-        <div className="absolute inset-x-0 top-[calc(100%+8px)] z-50 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-xl">
-          {results.map((result) => (
-            <button
-              key={`${result.type}-${result.label}-${result.detail}`}
-              type="button"
-              className="flex w-full items-center justify-between gap-3 border-b border-zinc-100 px-3 py-3 text-left last:border-0 hover:bg-zinc-50"
-              onClick={() => {
-                setQuery("");
-                if (result.type === "order") onOpenOrder(result.order.id);
-                if (result.type === "customer") onOpenCustomer(result.customer.id);
-                if (result.type === "vehicle" && result.customer) onOpenCustomer(result.customer.id);
-              }}
-            >
-              <span>
-                <span className="block text-sm font-bold text-zinc-950">{result.label}</span>
-                <span className="block text-xs text-zinc-500">{result.detail}</span>
-              </span>
-              <ChevronRight className="size-4 text-zinc-400" />
-            </button>
-          ))}
-        </div>
+      {query ? (
+        <button
+          type="button"
+          onClick={() => setQuery("")}
+          className="absolute right-2.5 top-1/2 z-10 grid size-6 -translate-y-1/2 place-items-center rounded-full bg-zinc-300/70 text-white transition active:scale-90"
+          aria-label="Limpar busca"
+        >
+          <X className="size-3.5" strokeWidth={3} />
+        </button>
       ) : null}
+
+      <AnimatePresence>
+        {results.length ? (
+          <motion.div
+            initial={{ opacity: 0, y: -6, scale: 0.99 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -6, scale: 0.99 }}
+            transition={springSnappy}
+            className="absolute inset-x-0 top-[calc(100%+8px)] z-50 overflow-hidden rounded-2xl bg-white shadow-float"
+          >
+            {results.map((result) => (
+              <button
+                key={`${result.type}-${result.label}-${result.detail}`}
+                type="button"
+                className="flex w-full items-center justify-between gap-3 border-b border-zinc-100 px-4 py-3 text-left transition-colors last:border-0 hover:bg-zinc-50 active:bg-zinc-100"
+                onClick={() => {
+                  haptic("select");
+                  setQuery("");
+                  if (result.type === "order") onOpenOrder(result.order.id);
+                  if (result.type === "customer") onOpenCustomer(result.customer.id);
+                  if (result.type === "vehicle" && result.customer) onOpenCustomer(result.customer.id);
+                }}
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-[15px] font-medium tracking-[-0.01em] text-zinc-950">
+                    {result.label}
+                  </span>
+                  <span className="mt-0.5 block truncate text-[13px] text-zinc-500">{result.detail}</span>
+                </span>
+                <ChevronRight className="size-4 shrink-0 text-zinc-300" />
+              </button>
+            ))}
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </div>
   );
 }
@@ -741,20 +840,39 @@ function MobileNavButton({
   return (
     <button
       type="button"
+      onPointerDown={() => {
+        if (!active) haptic("tap");
+      }}
       onClick={onClick}
-      className="relative grid h-14 place-items-center rounded-2xl text-zinc-500 transition duration-200 active:scale-95"
+      className="relative flex flex-col items-center justify-end gap-1 rounded-2xl pb-0.5 pt-1.5"
       title={tab.label}
       aria-label={tab.label}
+      aria-current={active ? "page" : undefined}
     >
       {active ? (
         <motion.span
           layoutId="mobile-nav-active"
-          className="absolute inset-1 rounded-2xl bg-zinc-950 shadow-lg shadow-zinc-950/15"
-          transition={{ type: "spring", stiffness: 420, damping: 34 }}
+          className="absolute inset-x-0.5 inset-y-0 rounded-[16px] bg-zinc-100/90"
+          transition={springSnappy}
         />
       ) : null}
-      <span className={`relative grid place-items-center ${active ? "text-white" : "text-zinc-500"}`}>
-        <Icon className="size-5" />
+
+      {/* O ícone sobe e cresce ao ativar: o movimento vertical é o que faz a
+          troca de aba ser percebida sem precisar de uma pílula colorida. */}
+      <motion.span
+        className={`relative grid place-items-center transition-colors duration-200 ${active ? "text-zinc-950" : "text-zinc-400"}`}
+        animate={{ scale: active ? 1.06 : 1, y: active ? -1 : 0 }}
+        transition={springSnappy}
+      >
+        <Icon className="size-[19px]" strokeWidth={active ? 2.3 : 2} />
+      </motion.span>
+
+      <span
+        className={`relative text-[9.5px] leading-none tracking-[-0.01em] transition-colors duration-200 ${
+          active ? "font-semibold text-zinc-950" : "font-medium text-zinc-400"
+        }`}
+      >
+        {tab.label}
       </span>
     </button>
   );
@@ -780,100 +898,130 @@ function HomeView({
 
   const activeOrders = state.orders.filter((order) => !order.deletedAt);
   const openOrders = activeOrders.filter((order) => !["finished", "delivered", "cancelled"].includes(order.status));
+
+  /* A cor aqui carrega significado (aguardando, em serviço, concluído), por isso
+     fica reduzida a um ponto e ao número. Chapar o cartão inteiro de gradiente
+     dava peso visual igual a todos os estados e escondia a informação. */
   const statusCards = [
-    { label: "Abertas", value: openOrders.length, tone: "from-sky-500 to-blue-600", icon: ClipboardCheck },
-    { label: "Em andamento", value: activeOrders.filter((order) => order.status === "in_service").length, tone: "from-amber-500 to-orange-600", icon: Wrench },
-    { label: "Aguardando", value: activeOrders.filter((order) => order.status === "waiting_approval" || order.status === "waiting_parts").length, tone: "from-violet-500 to-fuchsia-600", icon: Clock },
-    { label: "Concluidas", value: activeOrders.filter((order) => order.status === "finished" || order.status === "delivered").length, tone: "from-emerald-500 to-teal-600", icon: Check },
+    { label: "Abertas", value: openOrders.length, dot: "bg-sky-500", icon: ClipboardCheck },
+    { label: "Em andamento", value: activeOrders.filter((order) => order.status === "in_service").length, dot: "bg-amber-500", icon: Wrench },
+    { label: "Aguardando", value: activeOrders.filter((order) => order.status === "waiting_approval" || order.status === "waiting_parts").length, dot: "bg-violet-500", icon: Clock },
+    { label: "Concluídas", value: activeOrders.filter((order) => order.status === "finished" || order.status === "delivered").length, dot: "bg-emerald-500", icon: Check },
   ];
   const primaryActions = [
-    { title: "Nova OS", text: "Criar ordem", icon: FilePlus2, tone: "bg-violet-100 text-violet-700", onClick: onNewOrder },
-    { title: "Buscar cliente", text: "Encontrar cadastro", icon: UserSearch, tone: "bg-blue-100 text-blue-700", onClick: () => onNavigate("customers") },
-    { title: "Buscar veiculo", text: "Localizar placa", icon: Car, tone: "bg-emerald-100 text-emerald-700", onClick: () => onNavigate("customers") },
-    { title: "Emitir nota", text: "Buscar por CPF", icon: ReceiptText, tone: "bg-orange-100 text-orange-700", onClick: onOpenFiscalDocument },
+    { title: "Nova OS", text: "Criar ordem", icon: FilePlus2, onClick: onNewOrder },
+    { title: "Buscar cliente", text: "Encontrar cadastro", icon: UserSearch, onClick: () => onNavigate("customers") },
+    { title: "Buscar veículo", text: "Localizar placa", icon: Car, onClick: () => onNavigate("customers") },
+    { title: "Emitir nota", text: "Buscar por CPF", icon: ReceiptText, onClick: onOpenFiscalDocument },
   ];
   const quickActions = [
     { label: "Agenda", icon: CalendarClock, onClick: () => onNavigate("history") },
     { label: "Cliente", icon: UserRound, onClick: onNewCustomer },
-    { label: "Historico", icon: Clock, onClick: () => onNavigate("history") },
+    { label: "Histórico", icon: Clock, onClick: () => onNavigate("history") },
     { label: "Faturamento", icon: Landmark, onClick: () => onNavigate("finance") },
   ];
   const focusOrders = openOrders.slice(0, 3);
 
   return (
-    <div className="space-y-7 pb-2">
-      <section>
-        <h2 className="text-2xl font-black tracking-tight text-zinc-950 sm:text-3xl">O que deseja fazer hoje?</h2>
-        <div className="mt-4 grid grid-cols-2 gap-3">
+    <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="space-y-8 pb-2">
+      <motion.section variants={staggerItem}>
+        <h2 className="text-[26px] font-semibold leading-tight tracking-[-0.03em] text-zinc-950 sm:text-3xl">
+          O que deseja fazer hoje?
+        </h2>
+        <div className="mt-4 grid grid-cols-2 gap-2.5">
           {primaryActions.map((action) => {
             const Icon = action.icon;
             return (
-              <button
+              <Pressable
                 key={action.title}
-                type="button"
                 onClick={action.onClick}
-                className="group min-h-36 rounded-2xl border border-zinc-100 bg-white p-5 text-left shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-zinc-200/60 active:scale-[0.98]"
+                scale={0.975}
+                className="group flex min-h-[124px] flex-col justify-between rounded-2xl bg-white p-4 shadow-card transition-shadow duration-300 hover:shadow-raised"
               >
-                <span className={"grid size-14 place-items-center rounded-full transition group-hover:scale-105 " + action.tone}>
-                  <Icon className="size-6" />
+                <span className="grid size-10 place-items-center rounded-xl bg-zinc-100 text-zinc-700 transition-colors duration-200 group-hover:bg-zinc-950 group-hover:text-white">
+                  <Icon className="size-[18px]" />
                 </span>
-                <span className="mt-7 block text-base font-black text-zinc-950">{action.title}</span>
-                <span className="mt-1 block text-sm font-semibold text-zinc-500">{action.text}</span>
-              </button>
+                <span className="mt-4 block">
+                  <span className="block text-[15px] font-semibold tracking-[-0.015em] text-zinc-950">
+                    {action.title}
+                  </span>
+                  <span className="mt-0.5 block text-[13px] text-zinc-500">{action.text}</span>
+                </span>
+              </Pressable>
             );
           })}
         </div>
-      </section>
+      </motion.section>
 
-      <section>
-        <h2 className="text-lg font-black">Acesso rapido</h2>
+      <motion.section variants={staggerItem}>
+        <h2 className="text-[15px] font-semibold tracking-[-0.015em] text-zinc-950">Acesso rápido</h2>
         <div className="mt-3 grid grid-cols-4 gap-2">
           {quickActions.map((action) => {
             const Icon = action.icon;
             return (
-              <button key={action.label} type="button" onClick={action.onClick} className="grid place-items-center gap-2 text-center text-xs font-black text-zinc-700">
-                <span className="grid size-14 place-items-center rounded-full bg-white text-zinc-900 shadow-sm ring-1 ring-zinc-200 transition hover:-translate-y-0.5 hover:shadow-md">
-                  <Icon className="size-5" />
+              <Pressable
+                key={action.label}
+                onClick={action.onClick}
+                scale={0.94}
+                className="flex flex-col items-center gap-2 text-center"
+              >
+                <span className="grid size-[52px] place-items-center rounded-2xl bg-white text-zinc-700 shadow-card">
+                  <Icon className="size-[19px]" />
                 </span>
-                <span className="leading-tight">{action.label}</span>
-              </button>
+                <span className="text-[11px] font-medium leading-tight tracking-[-0.01em] text-zinc-600">
+                  {action.label}
+                </span>
+              </Pressable>
             );
           })}
         </div>
-      </section>
+      </motion.section>
 
-      <section>
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-black">Status das OS</h2>
-          <button type="button" onClick={() => onNavigate("orders")} className="text-sm font-black text-blue-600">
+      <motion.section variants={staggerItem}>
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-[15px] font-semibold tracking-[-0.015em] text-zinc-950">Status das OS</h2>
+          <Pressable
+            onClick={() => onNavigate("orders")}
+            withHaptic={false}
+            scale={0.96}
+            className="text-[13px] font-medium text-zinc-500 transition-colors hover:text-zinc-950"
+          >
             Ver todas
-          </button>
+          </Pressable>
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-3">
+        <div className="mt-3 grid grid-cols-2 gap-2.5">
           {statusCards.map((card) => {
             const Icon = card.icon;
             return (
-              <button
+              <Pressable
                 key={card.label}
-                type="button"
                 onClick={() => onNavigate("orders")}
-                className="group min-h-24 overflow-hidden rounded-2xl border border-zinc-100 bg-white p-3 text-left shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-zinc-200/60 active:scale-[0.98]"
+                scale={0.975}
+                className="rounded-2xl bg-white p-3.5 shadow-card transition-shadow duration-300 hover:shadow-raised"
               >
-                <span className={"grid size-9 place-items-center rounded-full bg-gradient-to-br text-white shadow-sm " + card.tone}>
-                  <Icon className="size-4" />
+                <span className="flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <span className={`size-1.5 rounded-full ${card.dot}`} />
+                    <span className="text-[12px] font-medium tracking-[-0.01em] text-zinc-500">{card.label}</span>
+                  </span>
+                  <Icon className="size-3.5 text-zinc-300" />
                 </span>
-                <strong className="mt-3 block text-2xl font-black tracking-tight text-zinc-950">{card.value}</strong>
-                <span className="mt-0.5 block truncate text-xs font-black text-zinc-500">{card.label}</span>
-              </button>
+                <motion.strong
+                  variants={popIn}
+                  className="tabular mt-2 block text-[28px] font-semibold leading-none tracking-[-0.03em] text-zinc-950"
+                >
+                  {card.value}
+                </motion.strong>
+              </Pressable>
             );
           })}
         </div>
-      </section>
+      </motion.section>
 
-      <section className="space-y-3">
+      <motion.section variants={staggerItem} className="space-y-2.5">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-black">Em foco</h2>
-          <Badge variant="muted">{focusOrders.length} agora</Badge>
+          <h2 className="text-[15px] font-semibold tracking-[-0.015em] text-zinc-950">Em foco</h2>
+          {focusOrders.length ? <Badge variant="muted">{focusOrders.length} agora</Badge> : null}
         </div>
         {focusOrders.length ? (
           focusOrders.map((order) => (
@@ -882,8 +1030,8 @@ function HomeView({
         ) : (
           <EmptyState icon={ClipboardCheck} title="Nenhuma OS aberta" text="Crie uma OS ou busque um cliente para iniciar o atendimento." />
         )}
-      </section>
-    </div>
+      </motion.section>
+    </motion.div>
   );
 }
 
@@ -922,24 +1070,39 @@ function CustomersView({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <Input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filtrar clientes" />
-      {filteredCustomers.map((customer) => (
-        <button
-          key={customer.id}
-          type="button"
-          className="flex w-full items-center justify-between rounded-lg border border-zinc-200 bg-white p-4 text-left shadow-sm"
-          onClick={() => onSelectCustomer(customer.id)}
-        >
-          <span>
-            <span className="block font-bold">{customer.name}</span>
-            <span className="mt-1 block text-sm text-zinc-500">
-              {formatCpf(customer.cpf)} Â· {formatPhone(customer.phone)}
-            </span>
-          </span>
-          <ChevronRight className="size-5 text-zinc-400" />
-        </button>
-      ))}
+
+      {/* `key` no contêiner remonta a lista quando o filtro muda, então os
+          resultados entram em cascata em vez de trocar de conteúdo no lugar. */}
+      <motion.div
+        key={filter}
+        variants={staggerContainer}
+        initial="hidden"
+        animate="visible"
+        className="space-y-2"
+      >
+        {filteredCustomers.map((customer) => (
+          <motion.div key={customer.id} variants={staggerItem}>
+            <Pressable
+              scale={0.99}
+              className="flex w-full items-center justify-between gap-3 rounded-2xl bg-white p-4 shadow-card transition-shadow duration-300 hover:shadow-raised"
+              onClick={() => onSelectCustomer(customer.id)}
+            >
+              <span className="min-w-0">
+                <span className="block truncate text-[15px] font-semibold tracking-[-0.015em] text-zinc-950">
+                  {customer.name}
+                </span>
+                <span className="tabular mt-0.5 block truncate text-[13px] text-zinc-500">
+                  {formatCpf(customer.cpf)} · {formatPhone(customer.phone)}
+                </span>
+              </span>
+              <ChevronRight className="size-[18px] shrink-0 text-zinc-300" />
+            </Pressable>
+          </motion.div>
+        ))}
+      </motion.div>
+
       {!filteredCustomers.length ? (
         <EmptyState icon={UsersRound} title="Nenhum cliente" text="Use o + da barra inferior para cadastrar o primeiro cliente." />
       ) : null}
@@ -966,7 +1129,7 @@ function CustomerProfile({
   const totalSpent = orders.reduce((sum, order) => sum + getOrderTotals(state, order.id).total, 0);
 
   function handleDeleteCustomer() {
-    if (!window.confirm(`Excluir ${customer.name}? Cliente, veiculos e OS vinculadas sairao das listas principais.`)) return;
+    if (!window.confirm(`Excluir ${customer.name}? Cliente, veículos e OS vinculadas sairão das listas principais.`)) return;
     try {
       deleteCustomer(customer.id);
       toast.success("Cliente excluido.");
@@ -977,19 +1140,21 @@ function CustomerProfile({
   }
 
   return (
-    <div className="relative space-y-4">
-      <Button type="button" variant="ghost" onClick={onBack}>
-        <ArrowLeft /> Clientes
-      </Button>
+    <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="relative space-y-5">
+      <motion.div variants={staggerItem}>
+        <BackLink label="Clientes" onClick={onBack} />
+      </motion.div>
 
-      <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+      <motion.section variants={staggerItem} className="rounded-2xl bg-white p-5 shadow-card">
         <div className="flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-2xl font-black tracking-tight">{customer.name}</h2>
-            <p className="mt-1 text-sm text-zinc-500">
-              {formatCpf(customer.cpf)} Â· {formatPhone(customer.phone)}
+          <div className="min-w-0">
+            <h2 className="text-[22px] font-semibold leading-tight tracking-[-0.025em] text-zinc-950">
+              {customer.name}
+            </h2>
+            <p className="tabular mt-1 text-[13px] text-zinc-500">
+              {formatCpf(customer.cpf)} · {formatPhone(customer.phone)}
             </p>
-            <p className="mt-1 text-sm text-zinc-500">{customer.email || "Cliente sem e-mail"}</p>
+            <p className="mt-0.5 truncate text-[13px] text-zinc-400">{customer.email || "Cliente sem e-mail"}</p>
           </div>
           <Badge variant={pending.length ? "warning" : "success"}>{pending.length ? `${pending.length} pend.` : "em dia"}</Badge>
         </div>
@@ -1001,44 +1166,79 @@ function CustomerProfile({
         <Button type="button" className="mt-4 w-full" onClick={onNewOrder}>
           <Plus /> Nova OS deste cliente
         </Button>
-        <Button type="button" variant="danger" className="mt-2 w-full" onClick={handleDeleteCustomer}>
-          <Trash2 /> Excluir cliente
-        </Button>
-      </section>
+        {/* Excluir fica como texto discreto, não como botão vermelho cheio: a
+            ação destrutiva precisa estar disponível sem competir com a primária. */}
+        <button
+          type="button"
+          onClick={handleDeleteCustomer}
+          className="mt-3 flex h-9 w-full items-center justify-center gap-1.5 rounded-full text-[13px] font-medium text-zinc-400 transition-colors hover:bg-rose-50 hover:text-rose-600 active:scale-[0.98]"
+        >
+          <Trash2 className="size-3.5" /> Excluir cliente
+        </button>
+      </motion.section>
 
-      <section className="space-y-3">
-        <h3 className="text-base font-black">Veículos</h3>
-        {vehicles.map((vehicle) => (
-          <VehicleCard key={vehicle.id} vehicle={vehicle} />
-        ))}
-      </section>
+      {vehicles.length ? (
+        <motion.section variants={staggerItem} className="space-y-2.5">
+          <SectionHeading>Veículos</SectionHeading>
+          {vehicles.map((vehicle) => (
+            <VehicleCard key={vehicle.id} vehicle={vehicle} />
+          ))}
+        </motion.section>
+      ) : null}
 
-      <section className="space-y-3">
-        <h3 className="text-base font-black">Histórico de serviços</h3>
-        {orders.map((order) => (
-          <OrderListCard key={order.id} order={order} onOpenOrder={onOpenOrder} />
-        ))}
-      </section>
-    </div>
+      {orders.length ? (
+        <motion.section variants={staggerItem} className="space-y-2.5">
+          <SectionHeading>Histórico de serviços</SectionHeading>
+          {orders.map((order) => (
+            <OrderListCard key={order.id} order={order} onOpenOrder={onOpenOrder} />
+          ))}
+        </motion.section>
+      ) : null}
+    </motion.div>
+  );
+}
+
+/** Cabeçalho de seção. Centraliza tamanho e peso para não variar entre telas. */
+function SectionHeading({ children }: { children: ReactNode }) {
+  return <h3 className="text-[15px] font-semibold tracking-[-0.015em] text-zinc-950">{children}</h3>;
+}
+
+/**
+ * Volta para a tela anterior. A seta ligeiramente deslocada no toque reforça a
+ * direção do gesto, como o botão de voltar do iOS.
+ */
+function BackLink({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onPointerDown={() => haptic("tap")}
+      onClick={onClick}
+      className="group -ml-1.5 inline-flex h-9 items-center gap-1 rounded-full pl-1.5 pr-3 text-[15px] font-medium text-zinc-500 transition-colors hover:text-zinc-950"
+    >
+      <ArrowLeft className="size-[18px] transition-transform duration-200 group-active:-translate-x-0.5" />
+      {label}
+    </button>
   );
 }
 
 function MiniStat({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="rounded-lg bg-zinc-50 p-3 transition hover:bg-zinc-100/80">
-      <p className="text-sm font-black tracking-tight">{value}</p>
-      <p className="mt-1 text-[11px] font-semibold text-zinc-500 uppercase tracking-wide">{label}</p>
+    <div className="rounded-xl bg-zinc-50 px-3 py-2.5 shadow-inset">
+      {/* O rótulo vem antes do valor na hierarquia visual (menor e mais claro),
+          mas depois na leitura — o número é o que se procura na varredura. */}
+      <p className="text-[10px] font-medium uppercase tracking-[0.08em] text-zinc-400">{label}</p>
+      <p className="tabular mt-0.5 truncate text-[14px] font-semibold tracking-[-0.015em] text-zinc-950">{value}</p>
     </div>
   );
 }
 
 function VehicleCard({ vehicle }: { vehicle: Vehicle }) {
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+    <div className="rounded-xl bg-white p-4 shadow-card">
       <VehicleVisual vehicle={vehicle} />
       <div className="mt-3 flex items-start justify-between gap-3">
         <div>
-          <p className="font-black">
+          <p className="font-semibold">
             {vehicle.brand} {vehicle.model}
           </p>
           <p className="mt-1 text-sm text-zinc-500">
@@ -1056,8 +1256,8 @@ function VehicleVisual({ vehicle }: { vehicle: Vehicle }) {
   const fallbackSrc = getVehicleCategoryImageFallback(vehicle.category);
 
   return (
-    <div className="relative overflow-hidden rounded-lg border border-zinc-200 bg-[linear-gradient(135deg,#fafafa,#eef8f5_48%,#fff7ed)]">
-      <div className="absolute left-4 top-4 z-10 rounded-full bg-white/80 px-3 py-1 text-xs font-bold text-zinc-700 shadow-sm">
+    <div className="relative overflow-hidden rounded-xl border border-zinc-200 bg-[linear-gradient(135deg,#fafafa,#eef8f5_48%,#fff7ed)]">
+      <div className="absolute left-4 top-4 z-10 rounded-full bg-white/85 px-2.5 py-1 text-[11px] font-semibold text-zinc-700 shadow-card backdrop-blur">
         {vehicle.category === "motorcycle" ? "Moto" : vehicle.category === "truck" || vehicle.category === "van" ? "Utilitário" : "Carro"}
       </div>
       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1072,10 +1272,10 @@ function VehicleVisual({ vehicle }: { vehicle: Vehicle }) {
       />
       <div className="absolute bottom-0 left-0 right-0 flex items-end justify-between gap-3 bg-gradient-to-t from-white/95 to-transparent px-5 pb-4 pt-8">
         <div>
-          <p className="text-sm font-black text-zinc-950">{vehicle.brand}</p>
+          <p className="text-sm font-semibold text-zinc-950">{vehicle.brand}</p>
           <p className="text-xs font-semibold text-zinc-500">{vehicle.model}</p>
         </div>
-        <div className="flex items-center gap-2 rounded-full bg-white px-3 py-2 text-xs font-bold text-zinc-700 shadow-sm">
+        <div className="flex items-center gap-2 rounded-full bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 shadow-card">
           <span
             className="size-3 rounded-full border border-zinc-300 bg-white"
             style={{ backgroundColor: vehicle.color?.toLowerCase().includes("branco") ? "#ffffff" : "#d4d4d8" }}
@@ -1114,24 +1314,36 @@ function OrdersView({
     );
   }
 
+  const allOrders = state.orders.filter((order) => !order.deletedAt);
+  const filterOptions = (["all", ...ORDER_STATUS_SEQUENCE, "cancelled"] as Array<"all" | OrderStatus>).map((status) => ({
+    value: status,
+    label: status === "all" ? "Todas" : ORDER_STATUS_LABEL[status],
+    count: status === "all" ? allOrders.length : allOrders.filter((order) => order.status === status).length,
+  }));
+
   return (
-    <div className="space-y-4">
-      <div className="flex gap-2 overflow-x-auto pb-1">
-        {(["all", ...ORDER_STATUS_SEQUENCE, "cancelled"] as Array<"all" | OrderStatus>).map((status) => (
-          <Button
-            key={status}
-            type="button"
-            size="sm"
-            variant={statusFilter === status ? "default" : "outline"}
-            onClick={() => setStatusFilter(status)}
-          >
-            {status === "all" ? "Todas" : ORDER_STATUS_LABEL[status]}
-          </Button>
+    <div className="space-y-3">
+      <Segmented
+        options={filterOptions}
+        value={statusFilter}
+        onChange={setStatusFilter}
+        layoutId="orders-filter-active"
+      />
+
+      <motion.div
+        key={statusFilter}
+        variants={staggerContainer}
+        initial="hidden"
+        animate="visible"
+        className="space-y-2"
+      >
+        {orders.map((order) => (
+          <motion.div key={order.id} variants={staggerItem}>
+            <OrderListCard order={order} onOpenOrder={onSelectOrder} />
+          </motion.div>
         ))}
-      </div>
-      {orders.map((order) => (
-        <OrderListCard key={order.id} order={order} onOpenOrder={onSelectOrder} />
-      ))}
+      </motion.div>
+
       {!orders.length ? (
         <EmptyState icon={ClipboardCheck} title="Sem ordens" text="Abra um cliente e crie a primeira OS pela ficha dele." />
       ) : null}
@@ -1159,43 +1371,56 @@ function OrderListCard({
   const nextItem = items.find((item) => !item.doneAt);
   const totals = getOrderTotals(state, order.id);
 
+  const progress = items.length ? (doneItems / items.length) * 100 : 0;
+
   return (
-    <button
-      type="button"
-      className="w-full rounded-lg border border-zinc-200 bg-white p-4 text-left shadow-sm transition hover:border-zinc-300 active:scale-[0.995]"
+    <Pressable
+      scale={0.99}
+      className="w-full rounded-2xl bg-white p-4 shadow-card transition-shadow duration-300 hover:shadow-raised"
       onClick={() => onOpenOrder(order.id)}
       onDoubleClick={() => onOpenCustomer?.(order.customerId)}
     >
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-black">{order.number}</p>
-          <p className="mt-1 text-sm text-zinc-500">
-            {customer?.name} - {vehicle?.model} {formatPlate(vehicle?.plate ?? "")}
+        <div className="min-w-0">
+          <p className="tabular text-[15px] font-semibold tracking-[-0.015em] text-zinc-950">{order.number}</p>
+          <p className="mt-0.5 truncate text-[13px] text-zinc-500">
+            {customer?.name} · {vehicle?.model} {formatPlate(vehicle?.plate ?? "")}
           </p>
         </div>
-        <div className="flex flex-col items-end gap-1">
+        <div className="flex shrink-0 flex-col items-end gap-1">
           <Badge variant={badgeForOrder(order.status)}>{ORDER_STATUS_LABEL[order.status]}</Badge>
           <Badge variant={badgeForPayment(order.paymentStatus)}>{PAYMENT_STATUS_LABEL[order.paymentStatus]}</Badge>
         </div>
       </div>
       {compact ? (
-        <div className="mt-3 rounded-lg bg-zinc-50 p-3">
-          <div className="flex items-center justify-between gap-3 text-sm">
-            <span className="font-semibold text-zinc-600">{nextItem ? `Fazer: ${nextItem.description}` : items.length ? "Tudo marcado como feito" : "Sem tarefa adicionada"}</span>
-            <strong>{items.length ? `${doneItems}/${items.length}` : "0/0"}</strong>
+        <div className="mt-3.5 rounded-xl bg-zinc-50 p-3 shadow-inset">
+          <div className="flex items-center justify-between gap-3">
+            <span className="truncate text-[13px] font-medium text-zinc-600">
+              {nextItem ? nextItem.description : items.length ? "Tudo marcado como feito" : "Sem tarefa adicionada"}
+            </span>
+            <strong className="tabular shrink-0 text-[13px] font-semibold text-zinc-950">
+              {items.length ? `${doneItems}/${items.length}` : "0/0"}
+            </strong>
           </div>
-          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-zinc-200">
-            <div className="h-full rounded-full bg-zinc-950" style={{ width: `${items.length ? (doneItems / items.length) * 100 : 0}%` }} />
+          <div className="mt-2.5 h-1 overflow-hidden rounded-full bg-zinc-200/80">
+            {/* A barra cresce a partir de zero ao aparecer, o que comunica
+                progresso melhor que um preenchimento já estático. */}
+            <motion.div
+              className="h-full rounded-full bg-zinc-950"
+              initial={{ width: 0 }}
+              animate={{ width: `${progress}%` }}
+              transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1], delay: 0.12 }}
+            />
           </div>
         </div>
       ) : (
-        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="mt-3.5 grid grid-cols-3 gap-2">
           <MiniStat label="KM" value={order.currentMileage.toLocaleString("pt-BR")} />
           <MiniStat label="Total" value={formatCurrency(totals.total)} />
           <MiniStat label="Saldo" value={formatCurrency(totals.balance)} />
         </div>
       )}
-    </button>
+    </Pressable>
   );
 }
 
@@ -1294,7 +1519,7 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
     { id: "budget" as const, label: "Adicionar ao orçamento", icon: ReceiptText },
     { id: "status" as const, label: "Status da OS", icon: ClipboardCheck },
     { id: "info" as const, label: "Data de entrega e informações", icon: Info },
-    { id: "execution" as const, label: "Diagnostico e execucao", icon: Wrench },
+    { id: "execution" as const, label: "Diagnóstico e execução", icon: Wrench },
     { id: "photos" as const, label: "Fotos e Anexos", icon: Images },
     { id: "finish" as const, label: isAlreadyFinalized ? "Comprovante e documento" : "Finalizar Serviço", icon: CreditCard },
     { id: "delete" as const, label: "Excluir OS", icon: Trash2 },
@@ -1303,19 +1528,17 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2">
-        <Button type="button" variant="ghost" onClick={onBack}>
-          <ArrowLeft /> Ordens
-        </Button>
+        <BackLink label="Ordens" onClick={onBack} />
         <Button type="button" variant="outline" onClick={onOpenCustomer}>
           <UserRound /> Cliente
         </Button>
       </div>
 
-      <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+      <section className="rounded-xl bg-white p-4 shadow-card">
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-sm font-bold text-zinc-500">{customer?.name}</p>
-            <h2 className="mt-1 text-2xl font-black tracking-tight">{order.number}</h2>
+            <h2 className="mt-1 text-2xl font-semibold tracking-tight">{order.number}</h2>
             <p className="mt-1 text-sm text-zinc-500">
               {vehicle?.brand} {vehicle?.model} - {formatPlate(vehicle?.plate ?? "")}
             </p>
@@ -1333,9 +1556,9 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
         </div>
       </section>
 
-      <section className="space-y-3 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+      <section className="space-y-3 rounded-xl bg-white p-4 shadow-card">
         <div className="flex items-center justify-between">
-          <h3 className="font-black">O que fazer no carro</h3>
+          <h3 className="font-semibold">O que fazer no carro</h3>
           <Badge variant="muted">
             {completedItems}/{items.length}
           </Badge>
@@ -1349,7 +1572,7 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
         ) : (
           <EmptyState icon={ClipboardCheck} title="Nada adicionado" text="A lista da OS começa limpa." />
         )}
-        <div className="rounded-lg bg-zinc-50 p-3">
+        <div className="rounded-xl bg-zinc-50 p-3">
           <div className="flex justify-between text-sm">
             <span>Total</span>
             <strong>{formatCurrency(totals.total)}</strong>
@@ -1358,18 +1581,18 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
             <span>Pago</span>
             <span>{formatCurrency(totals.paid)}</span>
           </div>
-          <div className="mt-3 flex justify-between text-lg font-black">
+          <div className="mt-3 flex justify-between text-lg font-semibold">
             <span>Falta receber</span>
             <span>{formatCurrency(totals.balance)}</span>
           </div>
         </div>
         {latestQuote ? (
-          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+          <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-bold">Revisão {latestQuote.version}</p>
                 <p className="text-xs text-zinc-500">
-                  {latestQuote.status} Â· {formatCurrency(latestQuote.total)}
+                  {latestQuote.status} · {formatCurrency(latestQuote.total)}
                 </p>
               </div>
               {latestQuote.status !== "approved" ? (
@@ -1384,9 +1607,9 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
         ) : null}
       </section>
 
-      <section className="hidden space-y-3 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+      <section className="hidden space-y-3 rounded-xl bg-white p-4 shadow-card">
         <div className="flex items-center justify-between">
-          <h3 className="font-black">Status da OS</h3>
+          <h3 className="font-semibold">Status da OS</h3>
           <Button type="button" size="sm" onClick={() => handleStatus()}>
             Avançar
           </Button>
@@ -1406,10 +1629,10 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
         </div>
       </section>
 
-      <section className="hidden space-y-3 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+      <section className="hidden space-y-3 rounded-xl bg-white p-4 shadow-card">
         <div className="flex items-center gap-2">
           <CalendarClock className="size-5 text-zinc-500" />
-          <h3 className="font-black">Agenda e responsáveis</h3>
+          <h3 className="font-semibold">Agenda e responsáveis</h3>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Previsão">
@@ -1454,16 +1677,16 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
         </div>
       </section>
 
-      <section className="hidden space-y-3 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+      <section className="hidden space-y-3 rounded-xl bg-white p-4 shadow-card">
         <div className="flex items-center justify-between">
-          <h3 className="font-black">Entrada do veículo</h3>
+          <h3 className="font-semibold">Entrada do veículo</h3>
           <Badge variant="muted">{order.currentMileage.toLocaleString("pt-BR")} km</Badge>
         </div>
         <div className="grid grid-cols-2 gap-2">
           <MiniStat label="Combustível" value={`${order.fuelLevel}%`} />
           <MiniStat label="Prioridade" value={PRIORITY_LABEL[order.priority]} />
         </div>
-        <div className="rounded-lg bg-zinc-50 p-3 text-sm text-zinc-600">
+        <div className="rounded-xl bg-zinc-50 p-3 text-sm text-zinc-600">
           {order.entryState}
         </div>
         <PhotoUploader orderId={order.id} />
@@ -1477,15 +1700,15 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
                 width={160}
                 height={160}
                 unoptimized
-                className="aspect-square rounded-lg border border-zinc-200 object-cover"
+                className="aspect-square rounded-xl border border-zinc-200 object-cover"
               />
             ))}
           </div>
         ) : null}
       </section>
 
-      <section className="hidden space-y-3 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-        <h3 className="font-black">Diagnóstico e execução</h3>
+      <section className="hidden space-y-3 rounded-xl bg-white p-4 shadow-card">
+        <h3 className="font-semibold">Diagnóstico e execução</h3>
         <Field label="Diagnóstico">
           <Textarea value={executionDraft.diagnosis} onChange={(event) => setExecutionDraft((current) => ({ ...current, diagnosis: event.target.value }))} />
         </Field>
@@ -1507,9 +1730,9 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
         </Button>
       </section>
 
-      <section className="hidden space-y-3 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+      <section className="hidden space-y-3 rounded-xl bg-white p-4 shadow-card">
         <div className="flex items-center justify-between">
-          <h3 className="font-black">Financeiro</h3>
+          <h3 className="font-semibold">Financeiro</h3>
           <Button type="button" size="sm" onClick={() => setPaymentSheetOpen(true)}>
             <Plus /> Pagamento
           </Button>
@@ -1520,7 +1743,7 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
           <MiniStat label="Saldo" value={formatCurrency(totals.balance)} />
         </div>
         {payments.map((payment) => (
-          <div key={payment.id} className="flex items-center justify-between rounded-lg bg-zinc-50 p-3">
+          <div key={payment.id} className="flex items-center justify-between rounded-xl bg-zinc-50 p-3">
             <div>
               <p className="text-sm font-bold">{PAYMENT_METHOD_LABEL[payment.method]}</p>
               <p className="text-xs text-zinc-500">{formatDateTime(payment.paidAt)}</p>
@@ -1530,9 +1753,9 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
         ))}
       </section>
 
-      <section className="hidden space-y-3 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+      <section className="hidden space-y-3 rounded-xl bg-white p-4 shadow-card">
         <div className="flex items-center justify-between">
-          <h3 className="font-black">Documento</h3>
+          <h3 className="font-semibold">Documento</h3>
           <Button type="button" size="sm" onClick={() => setDocumentSheetOpen(true)}>
             <FileText /> Preview
           </Button>
@@ -1571,13 +1794,13 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
                       key={item.id}
                       type="button"
                       onClick={() => setActionPanel(item.id)}
-                      className="flex w-full items-center justify-between rounded-lg border border-zinc-200 bg-white p-4 text-left shadow-sm transition hover:bg-zinc-50"
+                      className="flex w-full items-center justify-between rounded-xl bg-white p-4 text-left shadow-card transition-shadow duration-300 hover:shadow-raised"
                     >
                       <span className="flex items-center gap-3">
                         <span className="grid size-10 place-items-center rounded-full bg-zinc-100 text-zinc-700">
                           <Icon className="size-5" />
                         </span>
-                        <span className="text-sm font-black">{item.label}</span>
+                        <span className="text-sm font-semibold">{item.label}</span>
                       </span>
                       <ChevronRight className="size-5 text-zinc-400" />
                     </button>
@@ -1588,9 +1811,7 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
 
             {actionPanel === "budget" ? (
               <div className="space-y-4">
-                <Button type="button" variant="ghost" onClick={() => setActionPanel("menu")}>
-                  <ArrowLeft /> Ações
-                </Button>
+                <BackLink label="Ações" onClick={() => setActionPanel("menu")} />
                 <QuickTaskEntry orderId={order.id} />
                 <div className="space-y-2">
                   {items.map((item) => (
@@ -1598,7 +1819,7 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
                   ))}
                 </div>
                 {items.length > 0 && (
-                  <div className="rounded-lg bg-zinc-50 p-3">
+                  <div className="rounded-xl bg-zinc-50 p-3">
                     <div className="flex justify-between text-sm">
                       <span>Total orçamento</span>
                       <strong>{formatCurrency(totals.total)}</strong>
@@ -1624,9 +1845,7 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
 
             {actionPanel === "status" ? (
               <div className="space-y-4">
-                <Button type="button" variant="ghost" onClick={() => setActionPanel("menu")}>
-                  <ArrowLeft /> Ações
-                </Button>
+                <BackLink label="Ações" onClick={() => setActionPanel("menu")} />
                 <div className="grid gap-2">
                   {[...ORDER_STATUS_SEQUENCE, "cancelled"].map((status) => (
                     <Button
@@ -1645,9 +1864,7 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
 
             {actionPanel === "info" ? (
               <div className="space-y-4">
-                <Button type="button" variant="ghost" onClick={() => setActionPanel("menu")}>
-                  <ArrowLeft /> Ações
-                </Button>
+                <BackLink label="Ações" onClick={() => setActionPanel("menu")} />
                 <Field label="Previsão">
                   <Input
                     type="datetime-local"
@@ -1692,10 +1909,8 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
 
             {actionPanel === "execution" ? (
               <div className="space-y-4">
-                <Button type="button" variant="ghost" onClick={() => setActionPanel("menu")}>
-                  <ArrowLeft /> Acoes
-                </Button>
-                <Field label="Diagnostico">
+                <BackLink label="Ações" onClick={() => setActionPanel("menu")} />
+                <Field label="Diagnóstico">
                   <Textarea value={executionDraft.diagnosis} onChange={(event) => setExecutionDraft((current) => ({ ...current, diagnosis: event.target.value }))} />
                 </Field>
                 <Field label="Recomendacoes do mecanico">
@@ -1719,16 +1934,14 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
 
             {actionPanel === "delete" ? (
               <div className="space-y-4">
-                <Button type="button" variant="ghost" onClick={() => setActionPanel("menu")}>
-                  <ArrowLeft /> Acoes
-                </Button>
+                <BackLink label="Ações" onClick={() => setActionPanel("menu")} />
                 <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4">
                   <div className="flex items-start gap-3">
                     <div className="grid size-10 place-items-center rounded-full bg-rose-100 text-rose-700">
                       <Trash2 className="size-5" />
                     </div>
                     <div>
-                      <p className="font-black text-rose-950">Excluir esta OS?</p>
+                      <p className="font-semibold text-rose-950">Excluir esta OS?</p>
                       <p className="mt-1 text-sm font-medium text-rose-700">
                         Ela sera removida com itens, pagamentos, documentos e anexos vinculados.
                       </p>
@@ -1809,9 +2022,7 @@ function PhotoPanel({ orderId, photos, onBack }: { orderId: string; photos: { id
 
   return (
     <div className="space-y-4">
-      <Button type="button" variant="ghost" onClick={onBack}>
-        <ArrowLeft /> Ações
-      </Button>
+      <BackLink label="Ações" onClick={onBack} />
       <PhotoUploader orderId={orderId} />
       {photos.length ? (
         <div className="grid grid-cols-3 gap-2">
@@ -1823,7 +2034,7 @@ function PhotoPanel({ orderId, photos, onBack }: { orderId: string; photos: { id
                 width={160}
                 height={160}
                 unoptimized
-                className="aspect-square rounded-lg border border-zinc-200 object-cover"
+                className="aspect-square rounded-xl border border-zinc-200 object-cover"
               />
               <button
                 type="button"
@@ -1919,7 +2130,7 @@ function OrderItemRow({ item }: { item: OrderItem }) {
   }
 
   return (
-    <div className={`rounded-lg border p-3 ${done ? "border-emerald-200 bg-emerald-50/60" : "border-zinc-200 bg-zinc-50"}`}>
+    <div className={`rounded-xl border p-3 ${done ? "border-emerald-200 bg-emerald-50/60" : "border-zinc-200 bg-zinc-50"}`}>
       <div className="flex items-center justify-between gap-3">
         <button
           type="button"
@@ -1950,7 +2161,7 @@ function OrderItemRow({ item }: { item: OrderItem }) {
           )}
         </div>
         <div className="text-right">
-          <p className="text-sm font-black">{formatCurrency(total)}</p>
+          <p className="text-sm font-semibold">{formatCurrency(total)}</p>
           <div className="mt-1 flex justify-end gap-2 text-xs font-bold">
             <button type="button" className="text-zinc-600" onClick={() => setEditing((value) => !value)}>
               editar
@@ -1977,12 +2188,19 @@ function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <div className="grid place-items-center rounded-lg border border-dashed border-zinc-300 bg-zinc-50 p-6 text-center">
-      <Icon className="size-8 text-zinc-400" />
-      <p className="mt-3 font-black">{title}</p>
-      <p className="mt-1 text-sm text-zinc-500">{text}</p>
-      {action ? <div className="mt-4">{action}</div> : null}
-    </div>
+    <motion.div
+      initial={{ opacity: 0, scale: 0.98 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={springSmooth}
+      className="grid place-items-center rounded-2xl bg-zinc-50/80 px-6 py-10 text-center shadow-inset"
+    >
+      <span className="grid size-12 place-items-center rounded-2xl bg-white text-zinc-400 shadow-card">
+        <Icon className="size-5" />
+      </span>
+      <p className="mt-4 text-[15px] font-semibold tracking-[-0.015em] text-zinc-950">{title}</p>
+      <p className="mt-1 max-w-[34ch] text-[13px] leading-5 text-zinc-500">{text}</p>
+      {action ? <div className="mt-5">{action}</div> : null}
+    </motion.div>
   );
 }
 
@@ -2088,9 +2306,7 @@ function CustomerFlowSheet({
             </form>
           ) : (
             <form onSubmit={handleProfile} className="space-y-4">
-              <Button type="button" variant="ghost" onClick={() => patchDraft({ step: "cpf" })}>
-                <ArrowLeft /> CPF
-              </Button>
+              <BackLink label="CPF" onClick={() => patchDraft({ step: "cpf" })} />
               <Field label="Nome completo" error={errors.name}>
                 <Input value={String(draft.name)} onChange={(event) => patchDraft({ name: event.target.value })} autoFocus className={invalidFieldClass(errors.name)} />
               </Field>
@@ -2111,7 +2327,7 @@ function CustomerFlowSheet({
                   className={invalidFieldClass(errors.email)}
                 />
               </Field>
-              <label className="flex items-center gap-3 rounded-lg bg-zinc-50 p-3 text-sm font-semibold text-zinc-700">
+              <label className="flex items-center gap-3 rounded-xl bg-zinc-50 p-3 text-sm font-semibold text-zinc-700">
                 <input
                   type="checkbox"
                   checked={Boolean(draft.noEmail)}
@@ -2315,7 +2531,7 @@ function OrderFlowSheet({
 
           {customer && draft.step === "plate" ? (
             <form onSubmit={handlePlate} className="space-y-4">
-              <div className="rounded-lg bg-zinc-50 p-3">
+              <div className="rounded-xl bg-zinc-50 p-3">
                 <p className="text-sm font-bold">{customer.name}</p>
                 <p className="text-xs text-zinc-500">{formatCpf(customer.cpf)}</p>
               </div>
@@ -2342,10 +2558,8 @@ function OrderFlowSheet({
 
           {customer && draft.step === "vehicle" ? (
             <form onSubmit={handleVehicle} className="space-y-4">
-              <Button type="button" variant="ghost" onClick={() => patchDraft({ step: "plate" })}>
-                <ArrowLeft /> Placa
-              </Button>
-              <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+              <BackLink label="Placa" onClick={() => patchDraft({ step: "plate" })} />
+              <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
                 <p className="text-sm font-bold">Placa {formatPlate(String(draft.plate))}</p>
                 <p className="mt-0.5 text-xs text-zinc-500">
                   Primeiro cadastro desta placa. Selecione os dados abaixo.
@@ -2373,9 +2587,7 @@ function OrderFlowSheet({
 
           {customer && draft.step === "order" ? (
             <form onSubmit={handleOrder} className="space-y-4">
-              <Button type="button" variant="ghost" onClick={() => patchDraft({ step: "vehicle" })}>
-                <ArrowLeft /> Veículo
-              </Button>
+              <BackLink label="Veículo" onClick={() => patchDraft({ step: "vehicle" })} />
               {selectedVehicle ? <VehicleCard vehicle={selectedVehicle} /> : null}
               <Field label="Quilometragem atual" error={errors.currentMileage}>
                 <Input
@@ -2393,7 +2605,7 @@ function OrderFlowSheet({
                       key={level}
                       type="button"
                       onClick={() => patchDraft({ fuelLevel: level })}
-                      className={`h-11 rounded-lg border text-sm font-black transition ${
+                      className={`h-11 rounded-xl border text-sm font-semibold transition ${
                         String(draft.fuelLevel) === level
                           ? "border-zinc-950 bg-zinc-950 text-white"
                           : "border-zinc-200 bg-white text-zinc-600"
@@ -2451,9 +2663,9 @@ function PaymentSheet({ open, onOpenChange, orderId }: { open: boolean; onOpenCh
           <SheetDescription>Registre recebimento parcial ou total sem alterar o status da execução.</SheetDescription>
         </SheetHeader>
         <form onSubmit={handleSubmit} className="space-y-4 px-5 pb-6">
-          <div className="rounded-lg bg-zinc-50 p-3">
+          <div className="rounded-xl bg-zinc-50 p-3">
             <p className="text-sm font-bold">Saldo restante</p>
-            <p className="text-2xl font-black">{formatCurrency(totals?.balance ?? 0)}</p>
+            <p className="text-2xl font-semibold">{formatCurrency(totals?.balance ?? 0)}</p>
           </div>
           <Field label="Forma">
             <select className={selectClass} value={form.method} onChange={(event) => setForm((current) => ({ ...current, method: event.target.value as PaymentMethod }))}>
@@ -2602,7 +2814,7 @@ function FiscalDocumentSheet({
       <SheetContent className="sm:max-w-2xl">
         <SheetHeader>
           <SheetTitle>Emitir nota fiscal</SheetTitle>
-          <SheetDescription>Busque o CPF; o sistema usa automaticamente a ultima OS aberta ou, se nao houver, a ultima OS do cliente.</SheetDescription>
+          <SheetDescription>Busque o CPF; o sistema usa automaticamente a última OS aberta ou, se não houver, a última OS do cliente.</SheetDescription>
         </SheetHeader>
         <div className="sheet-scroll-area space-y-4 px-5">
           <form onSubmit={handleCpfSearch} className="space-y-3">
@@ -2625,22 +2837,22 @@ function FiscalDocumentSheet({
           </form>
 
           {customer ? (
-            <section className="space-y-3 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+            <section className="space-y-3 rounded-xl bg-white p-4 shadow-card">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="font-black">{customer.name}</p>
+                  <p className="font-semibold">{customer.name}</p>
                   <p className="mt-1 text-sm text-zinc-500">{formatCpf(customer.cpf)} - {formatPhone(customer.phone)}</p>
                 </div>
-                <Badge variant={openOrders.length ? "warning" : "muted"}>{openOrders.length ? "OS aberta" : "ultima OS"}</Badge>
+                <Badge variant={openOrders.length ? "warning" : "muted"}>{openOrders.length ? "OS aberta" : "última OS"}</Badge>
               </div>
 
               {selectedOrder && selectedTotals ? (
-                <div className="rounded-lg bg-zinc-50 p-3">
+                <div className="rounded-xl bg-zinc-50 p-3">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="text-sm font-black">{selectedOrder.number}</p>
+                      <p className="text-sm font-semibold">{selectedOrder.number}</p>
                       <p className="mt-1 text-xs font-semibold text-zinc-500">
-                        {selectedVehicle ? `${formatPlate(selectedVehicle.plate)} - ${selectedVehicle.brand} ${selectedVehicle.model}` : "Veiculo nao encontrado"}
+                        {selectedVehicle ? `${formatPlate(selectedVehicle.plate)} - ${selectedVehicle.brand} ${selectedVehicle.model}` : "Veículo não encontrado"}
                       </p>
                     </div>
                     <Badge variant={selectedOrder.status === "finished" || selectedOrder.status === "delivered" ? "success" : "info"}>
@@ -2800,17 +3012,15 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
   if (alreadyFinished && !showReFinalize && !document) {
     return (
       <div className="space-y-4">
-        <Button type="button" variant="ghost" onClick={onBack}>
-          <ArrowLeft /> Ações
-        </Button>
+        <BackLink label="Ações" onClick={onBack} />
 
-        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
           <div className="flex items-center gap-3">
             <div className="grid size-10 place-items-center rounded-full bg-emerald-100">
               <Check className="size-5 text-emerald-700" />
             </div>
             <div>
-              <p className="font-black text-emerald-950">Serviço já finalizado</p>
+              <p className="font-semibold text-emerald-950">Serviço já finalizado</p>
               <p className="text-sm text-emerald-700">Esta OS já foi concluída e possui documento gerado.</p>
             </div>
           </div>
@@ -2820,11 +3030,11 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
 
         <div className="space-y-2">
           {latestDoc && (
-            <div className="rounded-lg border border-zinc-200 bg-white p-3">
+            <div className="rounded-xl border border-zinc-200 bg-white p-3">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-sm font-bold">Documento v{latestDoc.version}</p>
-                  <p className="text-xs text-zinc-500">{formatDateTime(latestDoc.createdAt)} Â· {formatCurrency(latestDoc.total)}</p>
+                  <p className="text-xs text-zinc-500">{formatDateTime(latestDoc.createdAt)} · {formatCurrency(latestDoc.total)}</p>
                 </div>
                 <Badge variant="success">Gerado</Badge>
               </div>
@@ -2855,12 +3065,10 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
 
   return (
     <div className="space-y-4">
-      <Button type="button" variant="ghost" onClick={onBack}>
-        <ArrowLeft /> Ações
-      </Button>
+      <BackLink label="Ações" onClick={onBack} />
 
       {/* Summary */}
-      <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+      <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
         <p className="text-sm font-bold">{showReFinalize ? "Gerar nova versão" : "Conferência final"}</p>
         <p className="mt-1 text-xs text-zinc-500">Confirme os valores antes de gerar o documento final.</p>
         <div className="mt-3 grid grid-cols-3 gap-2">
@@ -2900,7 +3108,7 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
             </p>
           </Field>
 
-          <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+          <div className="rounded-2xl bg-white p-4 shadow-card">
             <div className="flex items-center justify-between text-sm font-semibold text-zinc-500">
               <span>Subtotal</span>
               <span>{formatCurrency(finalAmount)}</span>
@@ -2910,8 +3118,8 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
               <span>{formatCurrency(laborAmount)}</span>
             </div>
             <div className="mt-3 flex items-center justify-between border-t border-zinc-100 pt-3">
-              <span className="text-sm font-black text-zinc-950">Total do comprovante</span>
-              <span className="text-xl font-black text-zinc-950">{formatCurrency(documentTotal)}</span>
+              <span className="text-sm font-semibold text-zinc-950">Total do comprovante</span>
+              <span className="text-xl font-semibold text-zinc-950">{formatCurrency(documentTotal)}</span>
             </div>
           </div>
 
@@ -2924,7 +3132,7 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
                   key={method.id}
                   type="button"
                   onClick={() => { setPaymentMethod(method.id); setShowCustomInstallment(false); setCustomInstallment(""); }}
-                  className={`rounded-lg border px-2 py-2.5 text-xs font-bold transition ${
+                  className={`rounded-xl border px-2 py-2.5 text-xs font-bold transition ${
                     paymentMethod === method.id
                       ? "border-zinc-950 bg-zinc-950 text-white"
                       : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
@@ -2937,7 +3145,7 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
 
             {/* Cash / Pix - show change */}
             {(paymentMethod === "cash" || paymentMethod === "pix") && (
-              <div className="space-y-3 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+              <div className="space-y-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3">
                 <Field label="Valor recebido">
                   <Input
                     value={cashReceived}
@@ -2949,20 +3157,20 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
                 {cashReceived && (
                   <div className="grid grid-cols-2 gap-2">
                     {change > 0 ? (
-                      <div className="rounded-lg bg-emerald-50 p-3 text-center">
+                      <div className="rounded-xl bg-emerald-50 p-3 text-center">
                         <p className="text-xs font-semibold text-emerald-700">Troco</p>
-                        <p className="text-lg font-black text-emerald-900">{formatCurrency(change)}</p>
+                        <p className="text-lg font-semibold text-emerald-900">{formatCurrency(change)}</p>
                       </div>
                     ) : null}
                     {remaining > 0 ? (
-                      <div className="rounded-lg bg-amber-50 p-3 text-center">
+                      <div className="rounded-xl bg-amber-50 p-3 text-center">
                         <p className="text-xs font-semibold text-amber-700">Falta pagar</p>
-                        <p className="text-lg font-black text-amber-900">{formatCurrency(remaining)}</p>
+                        <p className="text-lg font-semibold text-amber-900">{formatCurrency(remaining)}</p>
                       </div>
                     ) : (
                       change === 0 && cashReceived ? (
-                        <div className="col-span-2 rounded-lg bg-emerald-50 p-3 text-center">
-                          <p className="text-sm font-black text-emerald-900">Pagamento exato!</p>
+                        <div className="col-span-2 rounded-xl bg-emerald-50 p-3 text-center">
+                          <p className="text-sm font-semibold text-emerald-900">Pagamento exato!</p>
                         </div>
                       ) : null
                     )}
@@ -2973,7 +3181,7 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
 
             {/* Credit - show installments */}
             {paymentMethod === "credit" && (
-              <div className="space-y-3 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+              <div className="space-y-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3">
                 <Field label="Número de parcelas">
                   <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-7">
                     {[1, 2, 3, 4, 6, 12].map((n) => (
@@ -2981,7 +3189,7 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
                         key={n}
                         type="button"
                         onClick={() => { setCreditInstallments(n); setShowCustomInstallment(false); setCustomInstallment(""); }}
-                        className={`rounded-lg border py-2.5 text-sm font-black transition ${
+                        className={`rounded-xl border py-2.5 text-sm font-semibold transition ${
                           !showCustomInstallment && creditInstallments === n
                             ? "border-zinc-950 bg-zinc-950 text-white"
                             : "border-zinc-200 bg-white text-zinc-600"
@@ -2993,7 +3201,7 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
                     <button
                       type="button"
                       onClick={() => setShowCustomInstallment((v) => !v)}
-                      className={`rounded-lg border py-2.5 text-sm font-black transition ${
+                      className={`rounded-xl border py-2.5 text-sm font-semibold transition ${
                         showCustomInstallment
                           ? "border-zinc-950 bg-zinc-950 text-white"
                           : "border-zinc-200 bg-white text-zinc-600"
@@ -3017,12 +3225,12 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
                     />
                   </Field>
                 )}
-                <div className="rounded-lg bg-white p-3">
+                <div className="rounded-xl bg-white p-3">
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-zinc-600">
                       {effectiveInstallments}x de
                     </span>
-                    <span className="text-lg font-black">{formatCurrency(installmentValue)}</span>
+                    <span className="text-lg font-semibold">{formatCurrency(installmentValue)}</span>
                   </div>
                   <div className="mt-1 flex items-center justify-between">
                     <span className="text-xs text-zinc-500">Total</span>
@@ -3034,10 +3242,10 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
 
             {/* Debit */}
             {paymentMethod === "debit" && (
-              <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+              <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-zinc-600">Total no débito</span>
-                  <span className="text-lg font-black">{formatCurrency(documentTotal)}</span>
+                  <span className="text-lg font-semibold">{formatCurrency(documentTotal)}</span>
                 </div>
               </div>
             )}
@@ -3050,10 +3258,10 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
           </Button>
         </>
       ) : (
-        <div className="space-y-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+        <div className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-sm font-black text-emerald-950">Documento salvo</p>
+              <p className="text-sm font-semibold text-emerald-950">Documento salvo</p>
               <p className="text-xs text-emerald-800">Versão {document.version} no histórico da OS.</p>
             </div>
             <Badge variant="success">Finalizado</Badge>
@@ -3146,7 +3354,7 @@ function MechanicSignatureCapture({ value, onChange }: { value: string; onChange
         ref={canvasRef}
         width={680}
         height={220}
-        className="h-32 w-full touch-none rounded-lg border border-dashed border-zinc-300 bg-white"
+        className="h-32 w-full touch-none rounded-xl border border-dashed border-zinc-300 bg-white"
         onPointerDown={start}
         onPointerMove={move}
         onPointerUp={stop}
@@ -3202,9 +3410,9 @@ function FinanceView({ onOpenOrder }: { onOpenOrder: (orderId: string) => void }
     .filter((item) => item.cost > 0 && activeOrders.some((order) => order.id === item.orderId))
     .map((item) => ({
       id: "cost-" + item.id,
-      type: "Saida",
+      type: "Saída",
       title: item.description,
-      detail: "Custo de peca/servico",
+      detail: "Custo de peça/serviço",
       amount: item.cost * item.quantity,
       date: item.updatedAt,
       icon: ArrowUpRight,
@@ -3240,7 +3448,7 @@ function FinanceView({ onOpenOrder }: { onOpenOrder: (orderId: string) => void }
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-xs font-bold uppercase text-white/50">Saldo disponivel</p>
-            <h2 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">{formatCurrency(totals.paid)}</h2>
+            <h2 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">{formatCurrency(totals.paid)}</h2>
           </div>
           <div className="grid size-11 place-items-center rounded-full bg-white/10 text-white ring-1 ring-white/10">
             <Wallet className="size-5" />
@@ -3249,11 +3457,11 @@ function FinanceView({ onOpenOrder }: { onOpenOrder: (orderId: string) => void }
         <div className="mt-7 grid grid-cols-2 gap-3 text-sm">
           <div className="rounded-2xl bg-white/8 p-3 ring-1 ring-white/10">
             <p className="font-semibold text-white/50">Liquido estimado</p>
-            <p className="mt-1 text-lg font-black">{formatCurrency(net)}</p>
+            <p className="mt-1 text-lg font-semibold">{formatCurrency(net)}</p>
           </div>
           <div className="rounded-2xl bg-white/8 p-3 ring-1 ring-white/10">
             <p className="font-semibold text-white/50">A receber</p>
-            <p className="mt-1 text-lg font-black">{formatCurrency(totals.balance)}</p>
+            <p className="mt-1 text-lg font-semibold">{formatCurrency(totals.balance)}</p>
           </div>
         </div>
       </section>
@@ -3264,7 +3472,7 @@ function FinanceView({ onOpenOrder }: { onOpenOrder: (orderId: string) => void }
         <BankMetric label="Faturado" value={formatCurrency(totals.revenue)} icon={ReceiptText} tone="sky" />
       </section>
 
-      <section className="grid grid-cols-3 gap-1 rounded-2xl border border-zinc-100 bg-white p-1 shadow-sm">
+      <section className="grid grid-cols-3 gap-1 rounded-2xl bg-white p-1 shadow-card">
         <FinanceSegmentButton active={financeTab === "extract"} icon={ArrowDownLeft} label="Extrato" onClick={() => setFinanceTab("extract")} />
         <FinanceSegmentButton active={financeTab === "pending"} icon={Clock} label="Pendentes" onClick={() => setFinanceTab("pending")} />
         <FinanceSegmentButton active={financeTab === "receipts"} icon={ReceiptText} label="Comprovantes" onClick={() => setFinanceTab("receipts")} />
@@ -3273,13 +3481,13 @@ function FinanceView({ onOpenOrder }: { onOpenOrder: (orderId: string) => void }
       {financeTab === "extract" ? (
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-black">Extrato</h2>
+          <h2 className="text-lg font-semibold">Extrato</h2>
           <Badge variant="muted">{transactions.length} logs</Badge>
         </div>
-        <div className="overflow-hidden rounded-2xl border border-zinc-100 bg-white shadow-sm">
+        <div className="overflow-hidden rounded-2xl bg-white shadow-card">
           {transactions.map((transaction) => {
             const Icon = transaction.icon;
-            const isOut = transaction.type === "Saida";
+            const isOut = transaction.type === "Saída";
             return (
               <button
                 key={transaction.id}
@@ -3291,11 +3499,11 @@ function FinanceView({ onOpenOrder }: { onOpenOrder: (orderId: string) => void }
                   <Icon className="size-5" />
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-black text-zinc-950">{transaction.title}</span>
+                  <span className="block truncate text-sm font-semibold text-zinc-950">{transaction.title}</span>
                   <span className="mt-0.5 block truncate text-xs font-semibold text-zinc-500">{transaction.detail}</span>
                 </span>
                 <span className="text-right">
-                  <span className={"block text-sm font-black " + (isOut ? "text-rose-600" : "text-zinc-950")}>
+                  <span className={"block text-sm font-semibold " + (isOut ? "text-rose-600" : "text-zinc-950")}>
                     {isOut ? "-" : "+"}{formatCurrency(transaction.amount)}
                   </span>
                   <span className="mt-0.5 block text-[11px] font-semibold text-zinc-400">{formatDate(transaction.date)}</span>
@@ -3305,7 +3513,7 @@ function FinanceView({ onOpenOrder }: { onOpenOrder: (orderId: string) => void }
           })}
           {!transactions.length ? (
             <div className="p-4">
-              <EmptyState icon={CircleDollarSign} title="Sem movimentacao" text="Pagamentos, custos e saldos pendentes aparecem aqui quando houver OS." />
+              <EmptyState icon={CircleDollarSign} title="Sem movimentação" text="Pagamentos, custos e saldos pendentes aparecem aqui quando houver OS." />
             </div>
           ) : null}
         </div>
@@ -3315,26 +3523,37 @@ function FinanceView({ onOpenOrder }: { onOpenOrder: (orderId: string) => void }
       {financeTab === "pending" ? (
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-black">Saldos pendentes</h2>
+          <SectionHeading>Saldos pendentes</SectionHeading>
           <Badge variant="warning">{pending.length}</Badge>
         </div>
-        {pending.map((order) => (
-          <button
-            key={order.id}
-            type="button"
-            onClick={() => setPaymentOrderId(order.id)}
-            className="flex w-full items-center justify-between gap-3 rounded-2xl border border-zinc-100 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-          >
-            <span>
-              <span className="block text-sm font-black">{order.number}</span>
-              <span className="mt-1 block text-xs font-semibold text-zinc-500">{getCustomer(state, order.customerId)?.name ?? "Cliente"}</span>
-            </span>
-            <span className="text-right">
-              <span className="block text-sm font-black text-amber-700">{formatCurrency(getOrderTotals(state, order.id).balance)}</span>
-              <span className="mt-1 block text-[11px] font-bold uppercase text-zinc-400">Receber</span>
-            </span>
-          </button>
-        ))}
+        <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="space-y-2">
+          {pending.map((order) => (
+            <motion.div key={order.id} variants={staggerItem}>
+              <Pressable
+                onClick={() => setPaymentOrderId(order.id)}
+                scale={0.99}
+                className="flex w-full items-center justify-between gap-3 rounded-2xl bg-white p-4 shadow-card transition-shadow duration-300 hover:shadow-raised"
+              >
+                <span className="min-w-0">
+                  <span className="tabular block text-[15px] font-semibold tracking-[-0.015em] text-zinc-950">
+                    {order.number}
+                  </span>
+                  <span className="mt-0.5 block truncate text-[13px] text-zinc-500">
+                    {getCustomer(state, order.customerId)?.name ?? "Cliente"}
+                  </span>
+                </span>
+                <span className="shrink-0 text-right">
+                  <span className="tabular block text-[15px] font-semibold tracking-[-0.015em] text-amber-700">
+                    {formatCurrency(getOrderTotals(state, order.id).balance)}
+                  </span>
+                  <span className="mt-0.5 block text-[10px] font-medium uppercase tracking-[0.08em] text-zinc-400">
+                    Receber
+                  </span>
+                </span>
+              </Pressable>
+            </motion.div>
+          ))}
+        </motion.div>
         {!pending.length ? (
           <EmptyState icon={Check} title="Nada pendente" text="Todas as ordens com valor fechado aparecem como quitadas." />
         ) : null}
@@ -3344,7 +3563,7 @@ function FinanceView({ onOpenOrder }: { onOpenOrder: (orderId: string) => void }
       {financeTab === "receipts" ? (
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-black">Comprovantes</h2>
+          <h2 className="text-lg font-semibold">Comprovantes</h2>
           <Badge variant="info">{receipts.length}</Badge>
         </div>
         <div className="space-y-2">
@@ -3355,16 +3574,16 @@ function FinanceView({ onOpenOrder }: { onOpenOrder: (orderId: string) => void }
                 key={document.id}
                 type="button"
                 onClick={() => setDocumentOrderId(document.orderId)}
-                className="flex w-full items-center gap-3 rounded-2xl border border-zinc-100 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                className="flex w-full items-center gap-3 rounded-2xl bg-white p-4 text-left shadow-card transition-shadow duration-300 hover:shadow-raised"
               >
                 <span className="grid size-11 place-items-center rounded-full bg-sky-50 text-sky-700">
                   <ReceiptText className="size-5" />
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-black">Comprovante {order?.number ?? "OS"}</span>
-                  <span className="mt-0.5 block truncate text-xs font-semibold text-zinc-500">Versao {document.version} - {formatDateTime(document.createdAt)}</span>
+                  <span className="block truncate text-sm font-semibold">Comprovante {order?.number ?? "OS"}</span>
+                  <span className="mt-0.5 block truncate text-xs font-semibold text-zinc-500">Versão {document.version} - {formatDateTime(document.createdAt)}</span>
                 </span>
-                <span className="text-sm font-black">{formatCurrency(document.total)}</span>
+                <span className="text-sm font-semibold">{formatCurrency(document.total)}</span>
               </button>
             );
           })}
@@ -3408,12 +3627,12 @@ function BankMetric({
   }[tone];
 
   return (
-    <div className="min-h-28 rounded-2xl border border-zinc-100 bg-white p-3 shadow-sm">
+    <div className="min-h-28 rounded-2xl bg-white p-3 shadow-card">
       <div className={"grid size-9 place-items-center rounded-full ring-1 " + toneClass}>
         <Icon className="size-4" />
       </div>
-      <p className="mt-3 truncate text-sm font-black tracking-tight text-zinc-950 sm:text-base">{value}</p>
-      <p className="mt-1 text-[11px] font-black uppercase text-zinc-400">{label}</p>
+      <p className="mt-3 truncate text-sm font-semibold tracking-tight text-zinc-950 sm:text-base">{value}</p>
+      <p className="mt-1 text-[11px] font-semibold uppercase text-zinc-400">{label}</p>
     </div>
   );
 }
@@ -3432,9 +3651,14 @@ function FinanceSegmentButton({
   return (
     <button
       type="button"
+      onPointerDown={() => {
+        if (!active) haptic("select");
+      }}
       onClick={onClick}
-      className={`flex min-h-11 items-center justify-center gap-2 rounded-xl px-2 text-xs font-black transition ${
-        active ? "bg-zinc-950 text-white shadow-sm" : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-950"
+      className={`flex min-h-11 items-center justify-center gap-2 rounded-xl px-2 text-[13px] font-semibold tracking-[-0.01em] transition-colors duration-200 active:scale-[0.97] ${
+        active
+          ? "bg-zinc-950 text-white shadow-[0_1px_3px_rgba(24,24,27,0.28)]"
+          : "text-zinc-500 hover:bg-zinc-100/70 hover:text-zinc-950"
       }`}
     >
       <Icon className="size-4" />
@@ -3459,27 +3683,27 @@ function FinanceTransactionSheet({
   const { state } = useWorkshop();
   const order = transaction && state ? state.orders.find((entry) => entry.id === transaction.orderId) : null;
   const customer = order && state ? getCustomer(state, order.customerId) : null;
-  const isOut = transaction?.type === "Saida";
+  const isOut = transaction?.type === "Saída";
 
   return (
     <Sheet open={Boolean(transaction)} onOpenChange={onOpenChange}>
       <SheetContent>
         <SheetHeader>
-          <SheetTitle>{transaction?.type ?? "Lancamento"}</SheetTitle>
+          <SheetTitle>{transaction?.type ?? "Lançamento"}</SheetTitle>
           <SheetDescription>Detalhe financeiro do valor selecionado no extrato.</SheetDescription>
         </SheetHeader>
         {transaction ? (
           <div className="space-y-4 px-5 pb-6">
             <div className="rounded-3xl bg-zinc-950 p-5 text-white">
               <p className="text-xs font-bold uppercase text-white/50">{transaction.title}</p>
-              <p className={`mt-3 text-3xl font-black ${isOut ? "text-rose-200" : "text-white"}`}>
+              <p className={`mt-3 text-3xl font-semibold ${isOut ? "text-rose-200" : "text-white"}`}>
                 {isOut ? "-" : "+"}{formatCurrency(transaction.amount)}
               </p>
               <p className="mt-2 text-sm font-semibold text-white/60">{formatDateTime(transaction.date)}</p>
             </div>
-            <div className="rounded-2xl border border-zinc-100 bg-white p-4 shadow-sm">
-              <InfoRow label="Descricao" value={transaction.detail} />
-              <InfoRow label="OS" value={order?.number ?? "Nao vinculada"} />
+            <div className="rounded-2xl bg-white p-4 shadow-card">
+              <InfoRow label="Descrição" value={transaction.detail} />
+              <InfoRow label="OS" value={order?.number ?? "Não vinculada"} />
               <InfoRow label="Cliente" value={customer?.name ?? "Cliente"} />
               <InfoRow label="Tipo" value={transaction.type} />
             </div>
@@ -3549,7 +3773,7 @@ function HistoryView({ onOpenOrder }: { onOpenOrder: (orderId: string) => void }
     <div className="space-y-4">
       {/* Search */}
       <div className="relative">
-        <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
+        <Search className="pointer-events-none absolute left-3.5 top-1/2 z-10 size-[17px] -translate-y-1/2 text-zinc-400" />
         <Input
           value={filter}
           onChange={(event) => setFilter(event.target.value)}
@@ -3572,72 +3796,69 @@ function HistoryView({ onOpenOrder }: { onOpenOrder: (orderId: string) => void }
       </div>
 
       {/* Status tabs */}
-      <div className="flex gap-1.5 overflow-x-auto pb-1">
-        {([
-          { id: "all", label: "Todos" },
-          { id: "finished", label: "Finalizados" },
-          { id: "delivered", label: "Entregues" },
-          { id: "paid", label: "Pagos" },
-          { id: "partial", label: "Parcial" },
-          { id: "cancelled", label: "Cancelados" },
-        ] as const).map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => setStatusFilter(tab.id)}
-            className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold transition ${
-              statusFilter === tab.id
-                ? "bg-zinc-950 text-white"
-                : "border border-zinc-200 bg-white text-zinc-600"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      <Segmented
+        options={[
+          { value: "all", label: "Todos" },
+          { value: "finished", label: "Finalizados" },
+          { value: "delivered", label: "Entregues" },
+          { value: "paid", label: "Pagos" },
+          { value: "partial", label: "Parcial" },
+          { value: "cancelled", label: "Cancelados" },
+        ]}
+        value={statusFilter}
+        onChange={setStatusFilter}
+        layoutId="history-filter-active"
+      />
 
       {/* Results count */}
-      <p className="text-xs font-semibold text-zinc-400">
+      <p className="tabular text-[12px] font-medium text-zinc-400">
         {filtered.length} registro{filtered.length === 1 ? "" : "s"} encontrado{filtered.length === 1 ? "" : "s"}
       </p>
 
       {/* Order list */}
-      <div className="space-y-2">
+      <motion.div
+        key={`${statusFilter}-${filter}-${dateFrom}-${dateTo}`}
+        variants={staggerContainer}
+        initial="hidden"
+        animate="visible"
+        className="space-y-2"
+      >
         {filtered.map((order) => {
           const customer = getCustomer(state, order.customerId);
           const vehicle = getVehicle(state, order.vehicleId);
           const totals = getOrderTotals(state, order.id);
           return (
-            <button
-              key={order.id}
-              type="button"
-              className="w-full rounded-lg border border-zinc-200 bg-white p-4 text-left shadow-sm transition hover:border-zinc-300"
-              onClick={() => onOpenOrder(order.id)}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-black">{order.number}</p>
-                  <p className="mt-1 text-sm text-zinc-500">
-                    {customer?.name} - {vehicle?.model} {formatPlate(vehicle?.plate ?? "")}
-                  </p>
-                  <p className="mt-1 text-xs text-zinc-400">
-                    {formatDate(order.createdAt)} - {formatCpf(customer?.cpf ?? "")}
-                  </p>
+            <motion.div key={order.id} variants={staggerItem}>
+              <Pressable
+                scale={0.99}
+                className="w-full rounded-2xl bg-white p-4 shadow-card transition-shadow duration-300 hover:shadow-raised"
+                onClick={() => onOpenOrder(order.id)}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="tabular text-[15px] font-semibold tracking-[-0.015em] text-zinc-950">{order.number}</p>
+                    <p className="mt-0.5 truncate text-[13px] text-zinc-500">
+                      {customer?.name} · {vehicle?.model} {formatPlate(vehicle?.plate ?? "")}
+                    </p>
+                    <p className="tabular mt-0.5 truncate text-[12px] text-zinc-400">
+                      {formatDate(order.createdAt)} · {formatCpf(customer?.cpf ?? "")}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 flex-col items-end gap-1">
+                    <Badge variant={badgeForOrder(order.status)}>{ORDER_STATUS_LABEL[order.status]}</Badge>
+                    <Badge variant={badgeForPayment(order.paymentStatus)}>{PAYMENT_STATUS_LABEL[order.paymentStatus]}</Badge>
+                  </div>
                 </div>
-                <div className="flex flex-col items-end gap-1">
-                  <Badge variant={badgeForOrder(order.status)}>{ORDER_STATUS_LABEL[order.status]}</Badge>
-                  <Badge variant={badgeForPayment(order.paymentStatus)}>{PAYMENT_STATUS_LABEL[order.paymentStatus]}</Badge>
+                <div className="mt-3.5 grid grid-cols-3 gap-2">
+                  <MiniStat label="Total" value={formatCurrency(totals.total)} />
+                  <MiniStat label="Pago" value={formatCurrency(totals.paid)} />
+                  <MiniStat label="Saldo" value={formatCurrency(totals.balance)} />
                 </div>
-              </div>
-              <div className="mt-3 grid grid-cols-3 gap-2">
-                <MiniStat label="Total" value={formatCurrency(totals.total)} />
-                <MiniStat label="Pago" value={formatCurrency(totals.paid)} />
-                <MiniStat label="Saldo" value={formatCurrency(totals.balance)} />
-              </div>
-            </button>
+              </Pressable>
+            </motion.div>
           );
         })}
-      </div>
+      </motion.div>
 
       {!filtered.length ? (
         <EmptyState icon={Clock} title="Nenhum registro" text="Altere os filtros para ver o histórico de atendimentos." />
@@ -3706,8 +3927,8 @@ function SettingsView() {
 
   return (
     <div className="space-y-4">
-      <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-        <h2 className="text-lg font-black">Conta e ambiente</h2>
+      <section className="rounded-xl bg-white p-4 shadow-card">
+        <h2 className="text-lg font-semibold">Conta e ambiente</h2>
         <div className="mt-3 grid gap-2">
           <InfoRow label="Usuário" value={currentUser.username} />
           <InfoRow label="Perfil" value={ROLE_LABEL[currentUser.role]} />
@@ -3731,16 +3952,16 @@ function SettingsView() {
         </div>
       </section>
 
-      <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+      <section className="rounded-xl bg-white p-4 shadow-card">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-black">Sincronização</h2>
+          <h2 className="text-lg font-semibold">Sincronização</h2>
           <Badge variant={syncVariant}>{syncLabel}</Badge>
         </div>
         <p className="mt-2 text-sm text-zinc-500">
           Dados são salvos automaticamente no Supabase — tabelas SQL (customers, vehicles, service_orders, photos, payments, documents…) e snapshot JSON completo com fotos em base64.
         </p>
         {supabaseConfigured && tableReady && syncStatus === "synced" && (
-          <div className="mt-3 rounded-lg bg-emerald-50 p-3">
+          <div className="mt-3 rounded-xl bg-emerald-50 p-3">
             <p className="text-sm font-semibold text-emerald-700">
               Todos os dados estao sincronizados com o banco de dados.
             </p>
@@ -3748,9 +3969,9 @@ function SettingsView() {
         )}
         {supabaseConfigured && !tableReady && (
           <div className="mt-3 space-y-3">
-            <div className="rounded-lg bg-amber-50 p-3">
+            <div className="rounded-xl bg-amber-50 p-3">
               <p className="text-sm font-semibold text-amber-700">
-                Tabela workshop_app_snapshots nao existe no Supabase.
+                Tabela workshop_app_snapshots não existe no Supabase.
               </p>
               <p className="mt-1 text-xs text-amber-600">
                 Abra o SQL Editor no Supabase e execute o SQLFINAL.sql do repositorio.
@@ -3763,9 +3984,9 @@ function SettingsView() {
         )}
         {tableReady && syncStatus === "table_missing" && (
           <div className="mt-3 space-y-3">
-            <div className="rounded-lg bg-amber-50 p-3">
+            <div className="rounded-xl bg-amber-50 p-3">
               <p className="text-sm font-semibold text-amber-700">
-                Tabela workshop_app_snapshots nao existe no Supabase.
+                Tabela workshop_app_snapshots não existe no Supabase.
               </p>
               <p className="mt-1 text-xs text-amber-600">
                 Abra o SQL Editor no Supabase e execute o SQLFINAL.sql do repositório.
@@ -3778,7 +3999,7 @@ function SettingsView() {
         )}
         {syncStatus === "error" && (
           <div className="mt-3 space-y-3">
-            <div className="rounded-lg bg-rose-50 p-3">
+            <div className="rounded-xl bg-rose-50 p-3">
               <p className="text-sm font-semibold text-rose-700">
                 Erro ao sincronizar. Verifique SUPABASE_SERVICE_ROLE_KEY no Vercel.
               </p>
@@ -3794,18 +4015,18 @@ function SettingsView() {
           </Button>
         )}
         {!supabaseConfigured && (
-          <div className="mt-3 rounded-lg bg-zinc-50 p-3">
+          <div className="mt-3 rounded-xl bg-zinc-50 p-3">
             <p className="text-sm text-zinc-500">
               Configure NEXT_PUBLIC_SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no arquivo .env (local) ou no Vercel (producao).
-              A chave anon sozinha nao salva dados — e necessaria a service role key no servidor.
+              A chave anon sozinha não salva dados — é necessária a service role key no servidor.
             </p>
           </div>
         )}
       </section>
 
-      <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+      <section className="rounded-xl bg-white p-4 shadow-card">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-black">Notificações</h2>
+          <h2 className="text-lg font-semibold">Notificações</h2>
           <Badge variant={notifPermission === "granted" ? "success" : notifPermission === "denied" ? "danger" : "muted"}>
             {notifPermission === "granted" ? "Ativado" : notifPermission === "denied" ? "Bloqueado" : "Desativado"}
           </Badge>
@@ -3827,7 +4048,7 @@ function SettingsView() {
           </Button>
         )}
         {openReminders.length > 0 && notifPermission === "granted" && (
-          <div className="mt-3 rounded-lg bg-zinc-50 p-3">
+          <div className="mt-3 rounded-xl bg-zinc-50 p-3">
             <p className="text-xs font-semibold text-zinc-500">
               {openReminders.length} lembretes ativos - notificações disparam quando faltam {"<= "}3 dias
             </p>
@@ -3835,11 +4056,11 @@ function SettingsView() {
         )}
       </section>
 
-      <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-        <h2 className="text-lg font-black">Funcionários</h2>
+      <section className="rounded-xl bg-white p-4 shadow-card">
+        <h2 className="text-lg font-semibold">Funcionários</h2>
         <div className="mt-3 space-y-2">
           {state.employees.map((employee) => (
-            <div key={employee.id} className="flex items-center justify-between rounded-lg bg-zinc-50 p-3">
+            <div key={employee.id} className="flex items-center justify-between rounded-xl bg-zinc-50 p-3">
               <div>
                 <p className="text-sm font-bold">{employee.name}</p>
                 <p className="text-xs text-zinc-500">{ROLE_LABEL[employee.role]}</p>
@@ -3850,11 +4071,11 @@ function SettingsView() {
         </div>
       </section>
 
-      <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-        <h2 className="text-lg font-black">Auditoria</h2>
+      <section className="rounded-xl bg-white p-4 shadow-card">
+        <h2 className="text-lg font-semibold">Auditoria</h2>
         <div className="mt-3 space-y-2">
           {state.auditEvents.slice(0, 12).map((event) => (
-            <div key={event.id} className="rounded-lg bg-zinc-50 p-3">
+            <div key={event.id} className="rounded-xl bg-zinc-50 p-3">
               <p className="text-sm font-bold">{event.summary}</p>
               <p className="text-xs text-zinc-500">{formatDateTime(event.occurredAt)}</p>
             </div>
@@ -3868,7 +4089,7 @@ function SettingsView() {
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between rounded-lg bg-zinc-50 px-3 py-2">
+    <div className="flex items-center justify-between rounded-xl bg-zinc-50 px-3 py-2">
       <span className="text-sm text-zinc-500">{label}</span>
       <strong className="text-sm">{value}</strong>
     </div>
@@ -3961,7 +4182,7 @@ function SignaturePad({ order }: { order: ServiceOrder }) {
         ref={canvasRef}
         width={680}
         height={220}
-        className="h-32 w-full touch-none rounded-lg border border-dashed border-zinc-300 bg-white"
+        className="h-32 w-full touch-none rounded-xl border border-dashed border-zinc-300 bg-white"
         onPointerDown={start}
         onPointerMove={move}
         onPointerUp={stop}

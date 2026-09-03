@@ -3,13 +3,42 @@
 :root {
   --background: #ffffff;
   --foreground: #18181b;
+
+  /* Fundo do app. Levemente mais frio que o branco para os cartões destacarem. */
+  --surface-app: #f6f7f9;
+  --surface-card: #ffffff;
+
+  /* Elevação em camadas: um contorno de 1px feito com sombra + difusão larga e
+     suave. O contorno é o que separa o cartão do fundo em telas claras, e a
+     difusão é o que dá profundidade — um `box-shadow` cinza único não faz nem
+     um nem outro e é o que deixa a interface com aspecto chapado.
+     Usar `box-shadow` no lugar de `border` também evita que a borda ocupe
+     espaço na caixa e desalinhe conteúdo por 1px. */
+  --elevation-card: 0 0 0 1px rgba(24, 24, 27, 0.055), 0 1px 2px rgba(24, 24, 27, 0.04);
+  --elevation-raised: 0 0 0 1px rgba(24, 24, 27, 0.075), 0 8px 24px -8px rgba(24, 24, 27, 0.14);
+  --elevation-float: 0 0 0 1px rgba(24, 24, 27, 0.07), 0 20px 48px -12px rgba(24, 24, 27, 0.28);
+  --elevation-modal: 0 -1px 0 rgba(24, 24, 27, 0.06), 0 -28px 64px -16px rgba(24, 24, 27, 0.28);
+  --elevation-inset: inset 0 0 0 1px rgba(24, 24, 27, 0.045);
+
+  --ease-ios: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-surface-app: var(--surface-app);
+  --color-surface-card: var(--surface-card);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  /* Expostos como `shadow-card`, `shadow-raised`, `shadow-float`,
+     `shadow-modal` e `shadow-inset`. */
+  --shadow-card: var(--elevation-card);
+  --shadow-raised: var(--elevation-raised);
+  --shadow-float: var(--elevation-float);
+  --shadow-modal: var(--elevation-modal);
+  --shadow-inset: var(--elevation-inset);
 }
 
 * {
@@ -17,9 +46,13 @@
 }
 
 html {
-  background: #ffffff;
+  background: var(--surface-app);
   color: var(--foreground);
   min-height: 100%;
+
+  /* Impede o Safari de reescalar o texto ao girar o aparelho. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
@@ -27,6 +60,14 @@ body {
   color: var(--foreground);
   font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
   min-height: 100%;
+
+  /* `cv11` troca o "l"/"1" por formas menos ambíguas e `ss03` arredonda o "a" —
+     detalhes que aproximam a Geist do texto de interface da Apple. */
+  font-feature-settings: "cv11", "ss03";
+  font-optical-sizing: auto;
+
+  /* Sem o realce azul o toque em cartões parece nativo, não web. */
+  -webkit-tap-highlight-color: transparent;
 }
 
 button,
@@ -34,6 +75,14 @@ input,
 select,
 textarea {
   font: inherit;
+}
+
+/* Elementos de toque não devem virar seleção de texto ao pressionar e arrastar. */
+button,
+[role="button"] {
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
 }
 
 ::-webkit-scrollbar {
@@ -50,35 +99,162 @@ textarea {
   border-radius: 999px;
 }
 
-/* Premium glow effects */
-.glow-emerald {
-  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.1), 0 0 20px -4px rgba(16, 185, 129, 0.15);
+::-webkit-scrollbar-thumb:hover {
+  background: #a1a1aa;
 }
 
-.glow-zinc {
-  box-shadow: 0 0 0 1px rgba(24, 24, 27, 0.06), 0 8px 24px -6px rgba(24, 24, 27, 0.08);
+::selection {
+  background: rgba(24, 24, 27, 0.12);
 }
 
-/* Subtle press effect for cards */
-.card-press {
-  transition: transform 120ms ease, box-shadow 120ms ease;
-}
-.card-press:active {
-  transform: scale(0.985);
+/* ─── Utilitários ────────────────────────────────────────────────────────── */
+
+/* Valores monetários e contadores alinhados em coluna. Sem isso, os números
+   "dançam" na horizontal a cada atualização de total. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
 }
 
-/* Smooth focus ring for inputs */
+/* Trilhas roláveis horizontais (filtros, chips) sem barra visível. */
+.scroll-x {
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+}
+.scroll-x::-webkit-scrollbar {
+  display: none;
+}
+.scroll-x > * {
+  scroll-snap-align: start;
+}
+
+/* Máscara nas pontas indica que há mais conteúdo para o lado. */
+.scroll-x-fade {
+  mask-image: linear-gradient(to right, transparent, #000 12px, #000 calc(100% - 12px), transparent);
+}
+
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* ─── Retorno ao toque ───────────────────────────────────────────────────── */
+
+.press {
+  transition:
+    transform 200ms var(--ease-out-expo),
+    box-shadow 200ms var(--ease-out-expo);
+}
+.press:active {
+  transform: scale(0.975);
+}
+
+/* Cartões grandes precisam encolher menos para não parecer que afundam. */
+.press-card {
+  transition:
+    transform 240ms var(--ease-out-expo),
+    box-shadow 240ms var(--ease-out-expo);
+}
+.press-card:active {
+  transform: scale(0.99);
+}
+
+/* ─── Foco ───────────────────────────────────────────────────────────────── */
+
+/* Anel de foco só para navegação por teclado — evita o halo em todo toque. */
+:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px #ffffff,
+    0 0 0 4px rgba(24, 24, 27, 0.55);
+}
+
 input:focus,
 select:focus,
 textarea:focus {
   outline: none;
-  box-shadow: 0 0 0 3px rgba(24, 24, 27, 0.08);
+}
+
+/* ─── Sheets ─────────────────────────────────────────────────────────────── */
+
+/* O projeto não usa `tailwindcss-animate`, então as transições de entrada e
+   saída dos painéis são definidas aqui. O Radix mantém o elemento montado até a
+   animação de `data-state="closed"` terminar, o que dá a saída sem trabalho
+   extra em JS. */
+@keyframes sheet-in {
+  from {
+    transform: translate3d(0, 100%, 0);
+  }
+  to {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes sheet-out {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(0, 100%, 0);
+  }
+}
+
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes overlay-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.sheet-panel[data-state="open"] {
+  animation: sheet-in 440ms var(--ease-ios);
+}
+.sheet-panel[data-state="closed"] {
+  animation: sheet-out 260ms cubic-bezier(0.4, 0, 1, 1);
+}
+
+/* Enquanto o dedo arrasta o painel, a animação precisa sair do caminho para o
+   transform inline acompanhar o toque quadro a quadro. */
+.sheet-panel[data-dragging="true"] {
+  animation: none;
+  transition: none;
+}
+
+/* Retorno elástico quando o arraste não passa do limite de fechamento. */
+.sheet-panel[data-settling="true"] {
+  animation: none;
+  transition: transform 420ms var(--ease-ios);
+}
+
+.sheet-overlay[data-state="open"] {
+  animation: overlay-in 320ms ease-out;
+}
+.sheet-overlay[data-state="closed"] {
+  animation: overlay-out 220ms ease-in;
 }
 
 .sheet-scroll-area {
   max-height: min(72dvh, calc(var(--sheet-viewport-height, 100dvh) - 112px));
   overflow-y: auto;
   overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   padding-bottom: calc(1.5rem + env(safe-area-inset-bottom));
   scroll-padding-bottom: calc(8rem + env(safe-area-inset-bottom));
 }
@@ -88,13 +264,47 @@ textarea:focus {
   scroll-margin-bottom: 8rem;
 }
 
-/* Premium badge pulse for important statuses */
+/* ─── Carregamento ───────────────────────────────────────────────────────── */
+
+/* Brilho percorrendo o bloco: comunica "carregando" melhor que um pulse de
+   opacidade, que costuma ser confundido com conteúdo desabilitado. */
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: #efeff1;
+  border-radius: 0.75rem;
+}
+.skeleton::after {
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0,
+    rgba(255, 255, 255, 0.65) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  animation: shimmer 1.6s infinite;
+  content: "";
+}
+
 @keyframes gentle-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.7; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
 }
 .animate-gentle-pulse {
-  animation: gentle-pulse 2s ease-in-out infinite;
+  animation: gentle-pulse 2.4s ease-in-out infinite;
 }
 
 .boot-screen {
@@ -113,5 +323,25 @@ textarea:focus {
   40% {
     opacity: 1;
     transform: translateY(-3px);
+  }
+}
+
+/* ─── Acessibilidade ─────────────────────────────────────────────────────── */
+
+/* Respeita "reduzir movimento" do sistema. Sem isso, animar a interface toda
+   deixa o app desconfortável para quem tem sensibilidade vestibular. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .press:active,
+  .press-card:active {
+    transform: none;
   }
 }
