@@ -278,7 +278,12 @@ async function writeSnapshotToSupabase(state: WorkshopState): Promise<SyncStatus
         throw new Error(detail);
       }
 
-      lastSyncError = "";
+      if (body?.entitySync && body.entitySync.ok === false) {
+        lastSyncError = body.entitySync.error || "Falha ao espelhar tabelas SQL.";
+        toast.warning(`Salvo na nuvem, mas tabelas SQL: ${lastSyncError.slice(0, 100)}`);
+      } else {
+        lastSyncError = "";
+      }
       return "synced";
     } catch (err) {
       lastSyncError = err instanceof Error ? err.message : String(err);
@@ -670,29 +675,35 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
   const deleteCustomer: StoreContextValue["deleteCustomer"] = useCallback(
     (customerId) => {
       ensurePermission(currentUser, "customers:write");
-      commit((draft, userId) => {
-        const customer = draft.customers.find((item) => item.id === customerId && !item.deletedAt);
-        if (!customer) throw new Error("Cliente nao encontrado.");
-        const before = { ...customer };
-        const orderIds = new Set(draft.orders.filter((order) => order.customerId === customerId).map((order) => order.id));
-        const vehicleIds = new Set(draft.vehicles.filter((vehicle) => vehicle.customerId === customerId).map((vehicle) => vehicle.id));
+      commit(
+        (draft, userId) => {
+          const customer = draft.customers.find((item) => item.id === customerId && !item.deletedAt);
+          if (!customer) throw new Error("Cliente nao encontrado.");
+          const before = { ...customer };
+          const now = new Date().toISOString();
 
-        draft.customers = draft.customers.filter((item) => item.id !== customerId);
-        draft.vehicles = draft.vehicles.filter((vehicle) => !vehicleIds.has(vehicle.id));
-        draft.orders = draft.orders.filter((order) => !orderIds.has(order.id));
-        draft.orderItems = draft.orderItems.filter((item) => !orderIds.has(item.orderId));
-        draft.inspectionItems = draft.inspectionItems.filter((item) => !orderIds.has(item.orderId));
-        draft.photos = draft.photos.filter((photo) => !orderIds.has(photo.orderId));
-        draft.quoteRevisions = draft.quoteRevisions.filter((revision) => !orderIds.has(revision.orderId));
-        draft.payments = draft.payments.filter((payment) => !orderIds.has(payment.orderId));
-        draft.documents = draft.documents.filter((document) => !orderIds.has(document.orderId));
-        draft.mileageRecords = draft.mileageRecords.filter((record) => !vehicleIds.has(record.vehicleId) && !orderIds.has(record.orderId ?? ""));
-        draft.reminders = draft.reminders.filter(
-          (reminder) => reminder.customerId !== customerId && !vehicleIds.has(reminder.vehicleId) && !orderIds.has(reminder.orderId ?? ""),
-        );
+          customer.deletedAt = now;
+          customer.updatedAt = now;
 
-        pushAudit(draft, userId, "customer", customer.id, "cancelled", `Cliente ${customer.name} excluido.`, before, customer);
-      });
+          draft.vehicles.forEach((vehicle) => {
+            if (vehicle.customerId === customerId && !vehicle.deletedAt) {
+              vehicle.deletedAt = now;
+              vehicle.updatedAt = now;
+            }
+          });
+
+          draft.orders.forEach((order) => {
+            if (order.customerId === customerId && !order.deletedAt) {
+              order.deletedAt = now;
+              order.updatedAt = now;
+              order.version += 1;
+            }
+          });
+
+          pushAudit(draft, userId, "customer", customer.id, "cancelled", `Cliente ${customer.name} excluido.`, before, customer);
+        },
+        { syncImmediately: true },
+      );
     },
     [commit, currentUser],
   );
@@ -827,21 +838,19 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
   const deleteOrder: StoreContextValue["deleteOrder"] = useCallback(
     (orderId) => {
       ensurePermission(currentUser, "orders:approve");
-      commit((draft, userId) => {
-        const order = draft.orders.find((item) => item.id === orderId && !item.deletedAt);
-        if (!order) throw new Error("OS nao encontrada.");
-        const before = { ...order };
-        draft.orders = draft.orders.filter((item) => item.id !== orderId);
-        draft.orderItems = draft.orderItems.filter((item) => item.orderId !== orderId);
-        draft.inspectionItems = draft.inspectionItems.filter((item) => item.orderId !== orderId);
-        draft.photos = draft.photos.filter((photo) => photo.orderId !== orderId);
-        draft.quoteRevisions = draft.quoteRevisions.filter((revision) => revision.orderId !== orderId);
-        draft.payments = draft.payments.filter((payment) => payment.orderId !== orderId);
-        draft.documents = draft.documents.filter((document) => document.orderId !== orderId);
-        draft.mileageRecords = draft.mileageRecords.filter((record) => record.orderId !== orderId);
-        draft.reminders = draft.reminders.filter((reminder) => reminder.orderId !== orderId);
-        pushAudit(draft, userId, "order", order.id, "cancelled", `OS ${order.number} excluida.`, before, order);
-      });
+      commit(
+        (draft, userId) => {
+          const order = draft.orders.find((item) => item.id === orderId && !item.deletedAt);
+          if (!order) throw new Error("OS nao encontrada.");
+          const before = { ...order };
+          const now = new Date().toISOString();
+          order.deletedAt = now;
+          order.updatedAt = now;
+          order.version += 1;
+          pushAudit(draft, userId, "order", order.id, "cancelled", `OS ${order.number} excluida.`, before, order);
+        },
+        { syncImmediately: true },
+      );
     },
     [commit, currentUser],
   );

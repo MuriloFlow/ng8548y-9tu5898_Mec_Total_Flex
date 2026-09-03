@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import Image from "next/image";
 import { Download, FileText, Printer, QrCode, Share2 } from "lucide-react";
 import { jsPDF } from "jspdf";
@@ -17,6 +17,7 @@ import {
   formatPlate,
   newId,
 } from "@/lib/workshop/format";
+import { useLogoPngDataUrl } from "@/lib/workshop/logo-raster";
 import { getCustomer, getEmployeeName, getOrderItems, getOrderPayments, getOrderTotals, getVehicle } from "@/lib/workshop/selectors";
 import { useWorkshop } from "@/lib/workshop/store";
 import type { DocumentType, OrderItem, ServiceOrder, WorkshopState } from "@/lib/workshop/types";
@@ -27,6 +28,24 @@ type DocumentPreviewProps = {
 
 function itemTotal(item: OrderItem) {
   return item.quantity * (item.unitPrice + item.laborPrice) - item.discount;
+}
+
+/** jsPDF throws on malformed raster data; a missing image must not block the PDF. */
+function addRasterImage(
+  pdf: jsPDF,
+  dataUrl: string | undefined,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+) {
+  if (!dataUrl?.startsWith("data:image/png") && !dataUrl?.startsWith("data:image/jpeg")) return false;
+  try {
+    pdf.addImage(dataUrl, dataUrl.startsWith("data:image/png") ? "PNG" : "JPEG", x, y, width, height);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function buildDocumentPdf(state: WorkshopState, order: ServiceOrder, type: DocumentType, logoDataUrl?: string) {
@@ -47,8 +66,7 @@ export function buildDocumentPdf(state: WorkshopState, order: ServiceOrder, type
   pdf.setLineWidth(0.35);
   pdf.roundedRect(10, 8, 190, 42, 2, 2);
   pdf.setFont("helvetica", "bold");
-  if (logoDataUrl) {
-    pdf.addImage(logoDataUrl, "PNG", 16, 12, 46, 26);
+  if (addRasterImage(pdf, logoDataUrl, 16, 12, 46, 26)) {
     pdf.setFontSize(11);
     pdf.text(state.company.tradeName.toUpperCase(), 18, 45);
   } else {
@@ -173,12 +191,8 @@ export function buildDocumentPdf(state: WorkshopState, order: ServiceOrder, type
   pdf.line(110, sigY + 14, 200, sigY + 14);
 
   // Draw signature images above the lines
-  if (order.customerSignatureDataUrl) {
-    pdf.addImage(order.customerSignatureDataUrl, "PNG", 10, sigY + 1, 80, 12);
-  }
-  if (order.mechanicSignatureDataUrl) {
-    pdf.addImage(order.mechanicSignatureDataUrl, "PNG", 110, sigY + 1, 80, 12);
-  }
+  addRasterImage(pdf, order.customerSignatureDataUrl, 10, sigY + 1, 80, 12);
+  addRasterImage(pdf, order.mechanicSignatureDataUrl, 110, sigY + 1, 80, 12);
 
   if (type === "fiscal_receipt") {
     pdf.setTextColor(180, 83, 9);
@@ -193,29 +207,7 @@ export function buildDocumentPdf(state: WorkshopState, order: ServiceOrder, type
 export function DocumentPreview({ orderId }: DocumentPreviewProps) {
   const { state, generateDocument } = useWorkshop();
   const [type, setType] = useState<DocumentType>("service_order");
-  const [logoDataUrl, setLogoDataUrl] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-    void fetch("/assets/logo.svg")
-      .then((response) => response.blob())
-      .then(
-        (blob) =>
-          new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(String(reader.result));
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-          }),
-      )
-      .then((dataUrl) => {
-        if (!cancelled) setLogoDataUrl(dataUrl);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const logoDataUrl = useLogoPngDataUrl();
 
   const order = state?.orders.find((item) => item.id === orderId);
   const payload = useMemo(() => {

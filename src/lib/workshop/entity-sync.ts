@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { encryptCpf, hashCpf } from "@/lib/crypto/sensitive";
 import type { WorkshopState } from "./types";
 
 type SyncResult = { ok: true; tables: string[] } | { ok: false; error: string; tables: string[] };
@@ -83,34 +84,32 @@ export async function syncEntitiesToTables(supabase: SupabaseClient, state: Work
       synced.push("employees");
     }
 
-    if (state.customers.length) {
-      await upsertRows(
-        supabase,
-        "customers",
-        state.customers.map((customer) => ({
-          id: customer.id,
-          company_id: cid,
-          cpf: customer.cpf,
-          name: customer.name,
-          phone: customer.phone,
-          email: customer.noEmail ? null : customer.email || null,
-          no_email: customer.noEmail,
-          address: customer.address ?? null,
-          district: customer.district ?? null,
-          notes: customer.notes ?? null,
-          created_at: customer.createdAt,
-          updated_at: customer.updatedAt,
-          deleted_at: customer.deletedAt ?? null,
-        })),
-      );
-      synced.push("customers");
-    }
+    await upsertRows(
+      supabase,
+      "customers",
+      state.customers.map((customer) => ({
+        id: customer.id,
+        company_id: cid,
+        cpf: encryptCpf(customer.cpf),
+        cpf_hash: hashCpf(customer.cpf),
+        name: customer.name,
+        phone: customer.phone,
+        email: customer.noEmail ? null : customer.email || null,
+        no_email: customer.noEmail,
+        address: customer.address ?? null,
+        district: customer.district ?? null,
+        notes: customer.notes ?? null,
+        created_at: customer.createdAt,
+        updated_at: customer.updatedAt,
+        deleted_at: customer.deletedAt ?? null,
+      })),
+    );
+    synced.push("customers");
 
-    if (state.vehicles.length) {
-      await upsertRows(
-        supabase,
-        "vehicles",
-        state.vehicles.map((vehicle) => ({
+    await upsertRows(
+      supabase,
+      "vehicles",
+      state.vehicles.map((vehicle) => ({
           id: vehicle.id,
           company_id: cid,
           customer_id: vehicle.customerId,
@@ -128,15 +127,13 @@ export async function syncEntitiesToTables(supabase: SupabaseClient, state: Work
           updated_at: vehicle.updatedAt,
           deleted_at: vehicle.deletedAt ?? null,
         })),
-      );
-      synced.push("vehicles");
-    }
+    );
+    synced.push("vehicles");
 
-    if (state.mileageRecords.length) {
-      await upsertRows(
-        supabase,
-        "mileage_records",
-        state.mileageRecords.map((record) => ({
+    await upsertRows(
+      supabase,
+      "mileage_records",
+      state.mileageRecords.map((record) => ({
           id: record.id,
           company_id: cid,
           vehicle_id: record.vehicleId,
@@ -144,9 +141,8 @@ export async function syncEntitiesToTables(supabase: SupabaseClient, state: Work
           mileage: record.mileage,
           recorded_at: record.recordedAt,
         })),
-      );
-      synced.push("mileage_records");
-    }
+    );
+    synced.push("mileage_records");
 
     if (state.services.length) {
       await upsertRows(
@@ -193,11 +189,10 @@ export async function syncEntitiesToTables(supabase: SupabaseClient, state: Work
       synced.push("catalog_products");
     }
 
-    if (state.orders.length) {
-      await upsertRows(
-        supabase,
-        "service_orders",
-        state.orders.map((order) => ({
+    await upsertRows(
+      supabase,
+      "service_orders",
+      state.orders.map((order) => ({
           id: order.id,
           company_id: cid,
           number: order.number,
@@ -229,15 +224,13 @@ export async function syncEntitiesToTables(supabase: SupabaseClient, state: Work
           updated_at: order.updatedAt,
           deleted_at: order.deletedAt ?? null,
         })),
-      );
-      synced.push("service_orders");
-    }
+    );
+    synced.push("service_orders");
 
-    if (state.orderItems.length) {
-      await upsertRows(
-        supabase,
-        "order_items",
-        state.orderItems.map((item, index) => ({
+    await upsertRows(
+      supabase,
+      "order_items",
+      state.orderItems.map((item, index) => ({
           id: item.id,
           company_id: cid,
           order_id: item.orderId,
@@ -256,9 +249,8 @@ export async function syncEntitiesToTables(supabase: SupabaseClient, state: Work
           created_at: item.createdAt,
           updated_at: item.updatedAt,
         })),
-      );
-      synced.push("order_items");
-    }
+    );
+    synced.push("order_items");
 
     if (state.inspectionItems.length) {
       await upsertRows(

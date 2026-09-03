@@ -66,7 +66,7 @@ import {
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { buildDocumentPdf, DocumentPreview } from "@/components/workshop/document-preview";
-import { BrandMark } from "@/components/workshop/brand-mark";
+import { BrandMark, BrandLogoInline } from "@/components/workshop/brand-mark";
 import {
   ORDER_STATUS_LABEL,
   ORDER_STATUS_SEQUENCE,
@@ -118,6 +118,7 @@ import type {
 } from "@/lib/workshop/types";
 import { VehicleIdentityFields } from "@/components/workshop/vehicle-identity-fields";
 import { getVehicleCategoryImageFallback, localImageForCategory, resolveVehicleImageUrl } from "@/lib/workshop/vehicle-image";
+import { useLogoPngDataUrl } from "@/lib/workshop/logo-raster";
 import {
   checkAndNotifyReminders,
   getNotificationPermission,
@@ -508,114 +509,134 @@ function WorkspaceShell() {
   }
 
   return (
-    <main className="min-h-dvh bg-[#f5f6f8] text-zinc-950">
-      <div className="mx-auto min-h-dvh w-full max-w-7xl lg:grid lg:grid-cols-[280px_1fr]">
-        <aside className="hidden border-r border-zinc-200 bg-white px-5 py-6 lg:block">
-          <div className="flex items-center gap-3">
-            <div className="grid size-11 place-items-center rounded-full bg-zinc-950 text-white">
-              <Wrench className="size-5" />
-            </div>
-            <div>
-              <p className="text-lg font-black">Total Flex</p>
-              <p className="text-xs font-medium text-zinc-500">Oficina digital</p>
-            </div>
+    <main className="min-h-dvh bg-[#f5f6f8] text-zinc-950 lg:flex">
+      <aside className="hidden lg:flex lg:w-[272px] lg:shrink-0 lg:flex-col lg:border-r lg:border-zinc-200 lg:bg-white">
+        <div className="flex items-center gap-3 border-b border-zinc-100 px-6 py-6">
+          <BrandLogoInline className="h-9" />
+          <div>
+            <p className="text-base font-semibold tracking-[-0.02em] text-zinc-900">Total Flex</p>
+            <p className="text-xs text-zinc-500">Oficina digital</p>
           </div>
-          <nav className="mt-8 space-y-1">
-            {[...tabs, { id: "settings" as ViewId, label: "Ajustes", icon: Settings }].map((tab) => {
-              const Icon = tab.icon;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => navigateTo(tab.id)}
-                  className={`flex h-11 w-full items-center gap-3 rounded-lg px-3 text-sm font-semibold transition ${
-                    view === tab.id ? "bg-zinc-950 text-white" : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-950"
-                  }`}
-                >
-                  <Icon className="size-4" />
-                  {tab.label}
-                </button>
-              );
-            })}
-          </nav>
-        </aside>
+        </div>
 
-        <section className="mx-auto flex min-h-dvh w-full max-w-xl flex-col bg-white shadow-sm lg:max-w-none lg:bg-transparent lg:shadow-none">
+        <nav className="flex-1 space-y-1 px-4 py-5">
+          {[...tabs, { id: "settings" as ViewId, label: "Ajustes", icon: Settings }].map((tab) => {
+            const Icon = tab.icon;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => navigateTo(tab.id)}
+                className={`flex h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-semibold transition ${
+                  view === tab.id ? "bg-zinc-950 text-white" : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-950"
+                }`}
+              >
+                <Icon className="size-4" />
+                {tab.label}
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="space-y-2 border-t border-zinc-100 px-4 py-5">
+          <Button type="button" className="h-11 w-full rounded-xl" onClick={() => setCustomerSheetOpen(true)}>
+            <Plus className="size-4" /> Novo cliente
+          </Button>
+          <Button type="button" variant="outline" className="h-11 w-full rounded-xl" onClick={openOrderFlow}>
+            <FilePlus2 className="size-4" /> Nova OS
+          </Button>
+        </div>
+      </aside>
+
+      <div className="w-full lg:flex lg:min-h-dvh lg:flex-1 lg:flex-col">
+        <section className="mx-auto flex min-h-dvh w-full max-w-xl flex-col overflow-x-hidden bg-white shadow-sm lg:mx-0 lg:max-w-none lg:min-h-dvh lg:min-w-0 lg:flex-1 lg:bg-transparent lg:shadow-none">
           <header className="sticky top-0 z-30 border-b border-zinc-200 bg-white/90 px-4 py-3 backdrop-blur-xl lg:bg-[#f5f6f8]/90">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => navigateTo("settings")}
-                  className="grid size-10 shrink-0 place-items-center rounded-full bg-white text-zinc-800 shadow-sm ring-1 ring-zinc-200 transition active:scale-95"
-                  title="Menu"
-                >
-                  <UserRound className="size-5" />
-                </button>
-                <div className="min-w-0">
-                  <p className="text-xs font-bold uppercase text-zinc-400">Total Flex</p>
-                  <h1 className="truncate text-lg font-black tracking-tight">
-                    {view === "home" ? "Inicio" : tabs.find((tab) => tab.id === view)?.label ?? "Menu"}
-                  </h1>
+            <div className="lg:mx-auto lg:max-w-5xl">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => navigateTo("settings")}
+                    className="grid size-10 shrink-0 place-items-center rounded-full bg-white text-zinc-800 shadow-sm ring-1 ring-zinc-200 transition active:scale-95 lg:hidden"
+                    title="Menu"
+                  >
+                    <UserRound className="size-5" />
+                  </button>
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold uppercase text-zinc-400 lg:hidden">Total Flex</p>
+                    <h1 className="truncate text-lg font-black tracking-tight">
+                      {view === "home" ? "Inicio" : tabs.find((tab) => tab.id === view)?.label ?? "Menu"}
+                    </h1>
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <div className="hidden items-center gap-2 lg:flex">
+                    <Button type="button" size="sm" className="rounded-xl" onClick={() => setCustomerSheetOpen(true)}>
+                      <Plus className="size-4" /> Cliente
+                    </Button>
+                    <Button type="button" size="sm" variant="outline" className="rounded-xl" onClick={openOrderFlow}>
+                      <FilePlus2 className="size-4" /> Nova OS
+                    </Button>
+                  </div>
+                  <Button type="button" variant="ghost" size="icon" onClick={() => navigateTo("history")} title="Alertas">
+                    <Bell />
+                  </Button>
+                  <Button type="button" variant="ghost" size="icon" onClick={logout} title="Sair">
+                    <LogOut />
+                  </Button>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <Button type="button" variant="ghost" size="icon" onClick={() => navigateTo("history")} title="Alertas">
-                  <Bell />
-                </Button>
-                <Button type="button" variant="ghost" size="icon" onClick={logout} title="Sair">
-                  <LogOut />
-                </Button>
-              </div>
+              <GlobalSearchBox onOpenCustomer={openCustomer} onOpenOrder={openOrder} />
             </div>
-            <GlobalSearchBox onOpenCustomer={openCustomer} onOpenOrder={openOrder} />
           </header>
 
-          <div className="flex-1 px-4 pb-28 pt-4 lg:px-6">
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={view}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
-                transition={{ duration: 0.18 }}
-              >
-                {view === "home" ? (
-                  <HomeView
-                    onOpenOrder={openOrder}
-                    onOpenCustomer={openCustomer}
-                    onNewOrder={openOrderFlow}
-                    onNewCustomer={() => setCustomerSheetOpen(true)}
-                    onOpenFiscalDocument={() => setFiscalSheetOpen(true)}
-                    onNavigate={navigateTo}
-                  />
-                ) : null}
-                {view === "customers" ? (
-                  <CustomersView
-                    selectedCustomerId={selectedCustomerId || undefined}
-                    onSelectCustomer={(customerId) => {
-                      if (!customerId) navigateTo("customers");
-                      else openCustomer(customerId);
-                    }}
-                    onNewOrder={openOrderFlow}
-                    onOpenOrder={openOrder}
-                  />
-                ) : null}
-                {view === "orders" ? (
-                  <OrdersView
-                    selectedOrderId={selectedOrderId || undefined}
-                    onSelectOrder={(orderId) => {
-                      if (!orderId) navigateTo("orders");
-                      else openOrder(orderId);
-                    }}
-                    onOpenCustomer={openCustomer}
-                  />
-                ) : null}
-                {view === "finance" ? <FinanceView onOpenOrder={openOrder} /> : null}
-                {view === "history" ? <HistoryView onOpenOrder={openOrder} /> : null}
-                {view === "settings" ? <SettingsView /> : null}
-              </motion.div>
-            </AnimatePresence>
+          <div className="flex-1 px-4 pb-28 pt-4 lg:px-8 lg:pb-8">
+            <div className="lg:mx-auto lg:max-w-5xl">
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={view}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.18 }}
+                >
+                  {view === "home" ? (
+                    <HomeView
+                      onOpenOrder={openOrder}
+                      onOpenCustomer={openCustomer}
+                      onNewOrder={openOrderFlow}
+                      onNewCustomer={() => setCustomerSheetOpen(true)}
+                      onOpenFiscalDocument={() => setFiscalSheetOpen(true)}
+                      onNavigate={navigateTo}
+                    />
+                  ) : null}
+                  {view === "customers" ? (
+                    <CustomersView
+                      selectedCustomerId={selectedCustomerId || undefined}
+                      onSelectCustomer={(customerId) => {
+                        if (!customerId) navigateTo("customers");
+                        else openCustomer(customerId);
+                      }}
+                      onNewOrder={openOrderFlow}
+                      onOpenOrder={openOrder}
+                    />
+                  ) : null}
+                  {view === "orders" ? (
+                    <OrdersView
+                      selectedOrderId={selectedOrderId || undefined}
+                      onSelectOrder={(orderId) => {
+                        if (!orderId) navigateTo("orders");
+                        else openOrder(orderId);
+                      }}
+                      onOpenCustomer={openCustomer}
+                    />
+                  ) : null}
+                  {view === "finance" ? <FinanceView onOpenOrder={openOrder} /> : null}
+                  {view === "history" ? <HistoryView onOpenOrder={openOrder} /> : null}
+                  {view === "settings" ? <SettingsView /> : null}
+                </motion.div>
+              </AnimatePresence>
+            </div>
           </div>
 
           <nav className="fixed inset-x-0 bottom-0 z-40 mx-auto max-w-xl px-3 pb-[calc(env(safe-area-inset-bottom)+12px)] lg:hidden">
@@ -670,13 +691,13 @@ function GlobalSearchBox({
   const results = useMemo(() => (state ? globalSearch(state, query) : []), [query, state]);
 
   return (
-    <div className="relative mt-3">
+    <div className="relative mt-3 w-full min-w-0">
       <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
       <Input
         value={query}
         onChange={(event) => setQuery(event.target.value)}
         placeholder="Buscar CPF, nome, placa ou OS"
-        className="pl-10"
+        className="w-full max-w-full pl-10"
         inputMode="search"
       />
       {results.length ? (
@@ -783,7 +804,7 @@ function HomeView({
     <div className="space-y-7 pb-2">
       <section>
         <h2 className="text-2xl font-black tracking-tight text-zinc-950 sm:text-3xl">O que deseja fazer hoje?</h2>
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-4 grid grid-cols-2 gap-3">
           {primaryActions.map((action) => {
             const Icon = action.icon;
             return (
@@ -828,7 +849,7 @@ function HomeView({
             Ver todas
           </button>
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="mt-3 grid grid-cols-2 gap-3">
           {statusCards.map((card) => {
             const Icon = card.icon;
             return (
@@ -1944,12 +1965,23 @@ function OrderItemRow({ item }: { item: OrderItem }) {
   );
 }
 
-function EmptyState({ icon: Icon, title, text }: { icon: typeof Home; title: string; text: string }) {
+function EmptyState({
+  icon: Icon,
+  title,
+  text,
+  action,
+}: {
+  icon: typeof Home;
+  title: string;
+  text: string;
+  action?: ReactNode;
+}) {
   return (
     <div className="grid place-items-center rounded-lg border border-dashed border-zinc-300 bg-zinc-50 p-6 text-center">
       <Icon className="size-8 text-zinc-400" />
       <p className="mt-3 font-black">{title}</p>
       <p className="mt-1 text-sm text-zinc-500">{text}</p>
+      {action ? <div className="mt-4">{action}</div> : null}
     </div>
   );
 }
@@ -2476,31 +2508,8 @@ function FiscalDocumentSheet({
   const [cpf, setCpf] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
   const [feedback, setFeedback] = useState("");
-  const [logoDataUrl, setLogoDataUrl] = useState("");
+  const logoDataUrl = useLogoPngDataUrl(open);
   const generatedFiscalDocs = useRef<Set<string>>(new Set());
-
-  useEffect(() => {
-    if (!open || logoDataUrl) return;
-    let cancelled = false;
-    void fetch("/assets/logo.svg")
-      .then((response) => response.blob())
-      .then(
-        (blob) =>
-          new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(String(reader.result));
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-          }),
-      )
-      .then((dataUrl) => {
-        if (!cancelled) setLogoDataUrl(dataUrl);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [logoDataUrl, open]);
 
   if (!state) return null;
   const currentState = state;
@@ -2700,7 +2709,7 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
   const [userChangedAmount, setUserChangedAmount] = useState(false);
   const [signature, setSignature] = useState("");
   const [document, setDocument] = useState<DocumentRecord | null>(null);
-  const [logoDataUrl, setLogoDataUrl] = useState("");
+  const logoDataUrl = useLogoPngDataUrl();
   const [showReFinalize, setShowReFinalize] = useState(false);
   const [customInstallment, setCustomInstallment] = useState("");
   const [showCustomInstallment, setShowCustomInstallment] = useState(false);
@@ -2717,28 +2726,6 @@ function FinalizeServicePanel({ orderId, onBack }: { orderId: string; onBack: ()
   const change = cashReceived ? Math.max(0, cashReceivedNum - documentTotal) : 0;
   const remaining = cashReceived ? Math.max(0, documentTotal - cashReceivedNum) : documentTotal;
   const installmentValue = effectiveInstallments > 0 ? documentTotal / effectiveInstallments : documentTotal;
-
-  useEffect(() => {
-    let cancelled = false;
-    void fetch("/assets/logo.svg")
-      .then((response) => response.blob())
-      .then(
-        (blob) =>
-          new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(String(reader.result));
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-          }),
-      )
-      .then((dataUrl) => {
-        if (!cancelled) setLogoDataUrl(dataUrl);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   if (!state || !order || !totals) return null;
   const currentState = state;

@@ -114,6 +114,7 @@ create table if not exists public.customers (
   id text primary key,
   company_id text references public.company(id) on delete restrict,
   cpf text not null,
+  cpf_hash text,
   name text not null,
   phone text not null,
   email text,
@@ -128,12 +129,14 @@ create table if not exists public.customers (
 );
 
 alter table public.customers add column if not exists company_id text;
+alter table public.customers add column if not exists cpf_hash text;
 alter table public.customers add column if not exists updated_at timestamptz not null default now();
 alter table public.customers add column if not exists deleted_at timestamptz;
 
-create unique index if not exists customers_company_cpf_active_unique
-  on public.customers(company_id, cpf)
-  where deleted_at is null;
+drop index if exists public.customers_company_cpf_active_unique;
+create unique index if not exists customers_company_cpf_hash_active_unique
+  on public.customers(company_id, cpf_hash)
+  where deleted_at is null and cpf_hash is not null;
 create index if not exists customers_name_trgm_idx on public.customers using gin (name gin_trgm_ops);
 create index if not exists customers_phone_idx on public.customers(company_id, phone);
 

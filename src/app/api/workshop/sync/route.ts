@@ -3,6 +3,7 @@ import { createSupabaseAdminClient, isSupabaseServerConfigured } from "@/lib/sup
 import { restSelectSnapshot, restUpsertSnapshot } from "@/lib/supabase/rest";
 import { syncEntitiesToTables } from "@/lib/workshop/entity-sync";
 import { createSeedState } from "@/lib/workshop/seed";
+import { decryptWorkshopStateFromStorage, encryptWorkshopStateForStorage } from "@/lib/workshop/state-crypto";
 import type { WorkshopState } from "@/lib/workshop/types";
 
 export const dynamic = "force-dynamic";
@@ -101,11 +102,12 @@ async function writeSnapshot(state: WorkshopState, updatedBy: string) {
   }
 
   const updatedAt = new Date().toISOString();
-  const stateToSave: WorkshopState = { ...state, updatedAt };
+  const statePlain: WorkshopState = { ...state, updatedAt };
+  const stateEncrypted = encryptWorkshopStateForStorage(statePlain);
   const rowPayload = {
     id: ROW_ID,
-    company_id: stateToSave.company.id || DEFAULT_COMPANY_ID,
-    state: stateToSave,
+    company_id: statePlain.company.id || DEFAULT_COMPANY_ID,
+    state: stateEncrypted,
     updated_by: updatedBy,
     updated_at: updatedAt,
   };
@@ -138,15 +140,18 @@ async function writeSnapshot(state: WorkshopState, updatedBy: string) {
 
   const supabase = createSupabaseAdminClient();
   const entitySync = supabase
-    ? await syncEntitiesToTables(supabase, saved.state!).catch((err) => ({
+    ? await syncEntitiesToTables(supabase, statePlain).catch((err) => ({
         ok: false as const,
         error: err instanceof Error ? err.message : String(err),
         tables: [] as string[],
       }))
     : { ok: false as const, error: "Client indisponivel", tables: [] as string[] };
 
+  const plainState =
+    saved.state && validState(saved.state) ? decryptWorkshopStateFromStorage(saved.state) : statePlain;
+
   return {
-    state: saved.state,
+    state: plainState,
     updatedAt: saved.updated_at ?? updatedAt,
     entitySync,
   };
@@ -166,7 +171,7 @@ export async function GET() {
 
     return NextResponse.json({
       ok: true,
-      state: result.row.state,
+      state: decryptWorkshopStateFromStorage(result.row.state),
       updatedAt: result.row.updated_at ?? result.row.state.updatedAt,
       source: "supabase",
     });
