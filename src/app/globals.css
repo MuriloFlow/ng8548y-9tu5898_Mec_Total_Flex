@@ -141,7 +141,7 @@ button,
 }
 
 .safe-top {
-  padding-top: env(safe-area-inset-top);
+  padding-top: calc(env(safe-area-inset-top, 0px) + 0.75rem);
 }
 
 /* ─── Retorno ao toque ───────────────────────────────────────────────────── */

@@ -613,7 +613,7 @@ function WorkspaceShell() {
         <section className="mx-auto flex min-h-dvh w-full max-w-xl flex-col overflow-x-hidden bg-white lg:mx-0 lg:max-w-none lg:min-h-dvh lg:min-w-0 lg:flex-1 lg:bg-transparent">
           {/* A saturação extra no blur mantém as cores vivas sob a barra
               translúcida, como nas barras de navegação do iOS. */}
-          <header className="safe-top sticky top-0 z-30 border-b border-zinc-200/70 bg-white/80 px-4 pb-3 pt-3 backdrop-blur-xl backdrop-saturate-150 lg:bg-surface-app/80">
+          <header className="safe-top sticky top-0 z-30 border-b border-zinc-200/70 bg-white/80 px-4 pb-3 backdrop-blur-xl backdrop-saturate-150 lg:bg-surface-app/80">
             <div className="lg:mx-auto lg:max-w-5xl">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-3">
@@ -709,42 +709,36 @@ function WorkspaceShell() {
           <div className="pointer-events-none fixed inset-x-0 bottom-0 z-30 h-32 bg-gradient-to-t from-surface-app via-surface-app/85 to-transparent lg:hidden" />
 
           <nav className="fixed inset-x-0 bottom-0 z-40 mx-auto max-w-xl px-4 pb-[calc(env(safe-area-inset-bottom)+10px)] lg:hidden">
-            <div className="grid grid-cols-7 items-end rounded-[24px] bg-white/85 px-1.5 pb-2 pt-2.5 shadow-[0_0_0_1px_rgba(24,24,27,0.06),0_-1px_0_rgba(255,255,255,0.9)_inset,0_16px_40px_-12px_rgba(24,24,27,0.22)] backdrop-blur-2xl backdrop-saturate-150">
+            <div className="relative grid grid-cols-7 items-end rounded-[24px] bg-white/85 px-1.5 pb-2 pt-2.5 shadow-[0_0_0_1px_rgba(24,24,27,0.06),0_-1px_0_rgba(255,255,255,0.9)_inset,0_16px_40px_-12px_rgba(24,24,27,0.22)] backdrop-blur-2xl backdrop-saturate-150">
               {mobileTabs.slice(0, 3).map((tab) => (
                 <MobileNavButton key={tab.id} tab={tab} active={view === tab.id} onClick={() => navigateTo(tab.id)} />
               ))}
 
-              {/* Coluna vazia reservando o espaço do botão flutuante, para
-                  nenhuma aba ficar por baixo dele. */}
+              {/* Coluna vazia: reserva o espaço central para o botão flutuante. */}
               <div aria-hidden />
 
               {mobileTabs.slice(3).map((tab) => (
                 <MobileNavButton key={tab.id} tab={tab} active={view === tab.id} onClick={() => navigateTo(tab.id)} />
               ))}
+
+              {/* Centro do botão na borda superior do dock (`top:0` + `y:-50%`):
+                  metade dentro, metade fora — padrão de FAB em barra inferior.
+                  O deslocamento vai em `style`, não em classe, porque o Motion
+                  reescreve `transform` ao pressionar. */}
+              <motion.button
+                type="button"
+                onPointerDown={() => haptic("select")}
+                onClick={() => setCustomerSheetOpen(true)}
+                style={{ x: "-50%", y: "-50%" }}
+                whileTap={{ scale: 0.92 }}
+                transition={springSnappy}
+                className="absolute left-1/2 top-3 z-10 grid size-14 place-items-center rounded-full bg-gradient-to-b from-zinc-800 to-zinc-950 text-white shadow-[0_1px_0_rgba(255,255,255,0.14)_inset,0_10px_28px_-8px_rgba(24,24,27,0.6)] ring-[3px] ring-white"
+                title="Novo cliente"
+                aria-label="Novo cliente"
+              >
+                <Plus className="size-6" strokeWidth={2.4} />
+              </motion.button>
             </div>
-
-            {/* O `nav` é o bloco de contenção, então `bottom: 100%` coloca a
-                base do botão exatamente no topo do dock (100% já inclui o
-                padding inferior da área segura). Os 12px descontados dão a
-                sobreposição que prende o botão à barra sem alcançar a linha de
-                ícones, e o anel na cor do fundo do app recorta o encaixe.
-
-                O deslocamento horizontal vai em `style.x`, não na classe
-                `-translate-x-1/2`: o Framer Motion reescreve `transform` ao
-                pressionar e descartaria a classe, jogando o botão para o lado. */}
-            <motion.button
-              type="button"
-              onPointerDown={() => haptic("select")}
-              onClick={() => setCustomerSheetOpen(true)}
-              style={{ x: "-50%" }}
-              whileTap={{ scale: 0.92 }}
-              transition={springSnappy}
-              className="absolute bottom-[calc(100%_-_12px)] left-1/2 z-10 grid size-14 place-items-center rounded-full bg-gradient-to-b from-zinc-800 to-zinc-950 text-white shadow-[0_1px_0_rgba(255,255,255,0.14)_inset,0_10px_28px_-8px_rgba(24,24,27,0.6)] ring-4 ring-surface-app"
-              title="Novo cliente"
-              aria-label="Novo cliente"
-            >
-              <Plus className="size-6" strokeWidth={2.4} />
-            </motion.button>
           </nav>
         </section>
       </div>

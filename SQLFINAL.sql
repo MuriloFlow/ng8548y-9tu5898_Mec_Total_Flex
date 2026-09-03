@@ -697,6 +697,26 @@ end $$;
 
 grant execute on function public.app_verify_login(text, text, text, inet) to anon, authenticated, service_role;
 
+create or replace function public.tf_apply_schema_patches()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  alter table public.customers add column if not exists cpf_hash text;
+  drop index if exists public.customers_company_cpf_active_unique;
+  create unique index if not exists customers_company_cpf_hash_active_unique
+    on public.customers(company_id, cpf_hash)
+    where deleted_at is null and cpf_hash is not null;
+  return jsonb_build_object('ok', true);
+exception when others then
+  return jsonb_build_object('ok', false, 'error', SQLERRM);
+end;
+$$;
+
+grant execute on function public.tf_apply_schema_patches() to service_role;
+
 select 'ok: company' as check_name, count(*) as rows from public.company;
 select 'ok: admin user' as check_name, username from public.app_users where username = 'totalflex';
 select 'ok: snapshot' as check_name, state->>'updatedAt' as updated_at from public.workshop_app_snapshots where id = 'singleton';

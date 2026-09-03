@@ -1,8 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { encryptCpf, hashCpf } from "@/lib/crypto/sensitive";
+import { isMissingColumnError } from "@/lib/workshop/schema-patches";
 import type { WorkshopState } from "./types";
 
-type SyncResult = { ok: true; tables: string[] } | { ok: false; error: string; tables: string[] };
+type SyncResult =
+  | { ok: true; tables: string[]; warnings?: string[] }
+  | { ok: false; error: string; tables: string[]; warnings?: string[] };
 
 function companyId(state: WorkshopState) {
   return state.company.id || "00000000-0000-4000-8000-000000000001";
@@ -45,6 +48,7 @@ async function pruneOrphans(
 export async function syncEntitiesToTables(supabase: SupabaseClient, state: WorkshopState): Promise<SyncResult> {
   const cid = companyId(state);
   const synced: string[] = [];
+  const warnings: string[] = [];
 
   try {
     const { error: companyError } = await supabase.from("company").upsert(
@@ -84,26 +88,37 @@ export async function syncEntitiesToTables(supabase: SupabaseClient, state: Work
       synced.push("employees");
     }
 
-    await upsertRows(
-      supabase,
-      "customers",
-      state.customers.map((customer) => ({
-        id: customer.id,
-        company_id: cid,
-        cpf: encryptCpf(customer.cpf),
-        cpf_hash: hashCpf(customer.cpf),
-        name: customer.name,
-        phone: customer.phone,
-        email: customer.noEmail ? null : customer.email || null,
-        no_email: customer.noEmail,
-        address: customer.address ?? null,
-        district: customer.district ?? null,
-        notes: customer.notes ?? null,
-        created_at: customer.createdAt,
-        updated_at: customer.updatedAt,
-        deleted_at: customer.deletedAt ?? null,
-      })),
-    );
+    const customerRows = state.customers.map((customer) => ({
+      id: customer.id,
+      company_id: cid,
+      cpf: encryptCpf(customer.cpf),
+      cpf_hash: hashCpf(customer.cpf),
+      name: customer.name,
+      phone: customer.phone,
+      email: customer.noEmail ? null : customer.email || null,
+      no_email: customer.noEmail,
+      address: customer.address ?? null,
+      district: customer.district ?? null,
+      notes: customer.notes ?? null,
+      created_at: customer.createdAt,
+      updated_at: customer.updatedAt,
+      deleted_at: customer.deletedAt ?? null,
+    }));
+
+    try {
+      await upsertRows(supabase, "customers", customerRows);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!isMissingColumnError(message, "cpf_hash")) throw error;
+
+      // Banco criado antes da migracao de CPF: salva sem cpf_hash para nao bloquear.
+      await upsertRows(
+        supabase,
+        "customers",
+        customerRows.map(({ cpf_hash: _ignored, ...row }) => row),
+      );
+      warnings.push("Execute SQL_MIGRATION_cpf_hash.sql no Supabase SQL Editor.");
+    }
     synced.push("customers");
 
     await upsertRows(
@@ -417,12 +432,13 @@ export async function syncEntitiesToTables(supabase: SupabaseClient, state: Work
       synced.push("processed_operation_keys");
     }
 
-    return { ok: true, tables: synced };
+    return { ok: true, tables: synced, warnings: warnings.length ? warnings : undefined };
   } catch (err) {
     return {
       ok: false,
       error: err instanceof Error ? err.message : String(err),
       tables: synced,
+      warnings: warnings.length ? warnings : undefined,
     };
   }
 }

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createSupabaseAdminClient, isSupabaseServerConfigured } from "@/lib/supabase/server";
 import { restSelectSnapshot, restUpsertSnapshot } from "@/lib/supabase/rest";
 import { syncEntitiesToTables } from "@/lib/workshop/entity-sync";
+import { applyWorkshopSchemaPatches } from "@/lib/workshop/schema-patches";
 import { createSeedState } from "@/lib/workshop/seed";
 import { decryptWorkshopStateFromStorage, encryptWorkshopStateForStorage } from "@/lib/workshop/state-crypto";
 import type { WorkshopState } from "@/lib/workshop/types";
@@ -139,6 +140,9 @@ async function writeSnapshot(state: WorkshopState, updatedBy: string) {
   }
 
   const supabase = createSupabaseAdminClient();
+  if (supabase) {
+    await applyWorkshopSchemaPatches(supabase);
+  }
   const entitySync = supabase
     ? await syncEntitiesToTables(supabase, statePlain).catch((err) => ({
         ok: false as const,
