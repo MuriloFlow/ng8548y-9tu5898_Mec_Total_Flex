@@ -1131,8 +1131,10 @@ function CustomerProfile({
 }) {
   const { state, deleteCustomer } = useWorkshop();
   const [editOpen, setEditOpen] = useState(false);
+  const [editVehicleId, setEditVehicleId] = useState<string | null>(null);
   if (!state) return null;
   const vehicles = getVehiclesForCustomer(state, customer.id);
+  const editVehicle = editVehicleId ? vehicles.find((item) => item.id === editVehicleId) : undefined;
   const orders = getOrdersForCustomer(state, customer.id);
   const pending = orders.filter((order) => order.paymentStatus !== "paid");
   const totalSpent = orders.reduce((sum, order) => sum + getOrderTotals(state, order.id).total, 0);
@@ -1202,7 +1204,7 @@ function CustomerProfile({
         <motion.section variants={staggerItem} className="space-y-2.5">
           <SectionHeading>Veículos</SectionHeading>
           {vehicles.map((vehicle) => (
-            <VehicleCard key={vehicle.id} vehicle={vehicle} />
+            <VehicleCard key={vehicle.id} vehicle={vehicle} onEdit={() => setEditVehicleId(vehicle.id)} />
           ))}
         </motion.section>
       ) : null}
@@ -1217,6 +1219,16 @@ function CustomerProfile({
       ) : null}
 
       <CustomerEditSheet customer={customer} open={editOpen} onOpenChange={setEditOpen} />
+      {editVehicle ? (
+        <VehicleEditSheet
+          vehicle={editVehicle}
+          customerId={customer.id}
+          open={Boolean(editVehicle)}
+          onOpenChange={(open) => {
+            if (!open) setEditVehicleId(null);
+          }}
+        />
+      ) : null}
     </motion.div>
   );
 }
@@ -1255,15 +1267,29 @@ function MiniStat({ label, value }: { label: string; value: string | number }) {
   );
 }
 
-function VehicleCard({ vehicle }: { vehicle: Vehicle }) {
+function VehicleCard({ vehicle, onEdit }: { vehicle: Vehicle; onEdit?: () => void }) {
   return (
     <div className="rounded-xl bg-white p-4 shadow-card">
       <VehicleVisual vehicle={vehicle} />
       <div className="mt-3 flex items-start justify-between gap-3">
-        <div>
-          <p className="font-semibold">
-            {vehicle.brand} {vehicle.model}
-          </p>
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-1">
+            <p className="truncate font-semibold">
+              {vehicle.brand} {vehicle.model}
+            </p>
+            {onEdit ? (
+              <button
+                type="button"
+                onPointerDown={() => haptic("tap")}
+                onClick={onEdit}
+                className="grid size-8 shrink-0 place-items-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 active:scale-95"
+                aria-label="Editar veículo"
+                title="Editar veículo"
+              >
+                <Pencil className="size-4" strokeWidth={2} />
+              </button>
+            ) : null}
+          </div>
           <p className="mt-1 text-sm text-zinc-500">
             {formatPlate(vehicle.plate)} - {vehicle.year ?? "ano n/i"} - {vehicle.color ?? "cor n/i"}
           </p>
@@ -1274,7 +1300,7 @@ function VehicleCard({ vehicle }: { vehicle: Vehicle }) {
   );
 }
 
-function VehicleVisual({ vehicle }: { vehicle: Vehicle }) {
+function VehicleVisual({ vehicle, onEdit }: { vehicle: Vehicle; onEdit?: () => void }) {
   const imageSrc = resolveVehicleImageUrl(vehicle);
   const fallbackSrc = getVehicleCategoryImageFallback(vehicle.category);
 
@@ -1283,6 +1309,18 @@ function VehicleVisual({ vehicle }: { vehicle: Vehicle }) {
       <div className="absolute left-4 top-4 z-10 rounded-full bg-white/85 px-2.5 py-1 text-[11px] font-semibold text-zinc-700 shadow-card backdrop-blur">
         {vehicle.category === "motorcycle" ? "Moto" : vehicle.category === "truck" || vehicle.category === "van" ? "Utilitário" : "Carro"}
       </div>
+      {onEdit ? (
+        <button
+          type="button"
+          onPointerDown={() => haptic("tap")}
+          onClick={onEdit}
+          className="absolute right-3 top-3 z-10 grid size-8 place-items-center rounded-full bg-white/90 text-zinc-500 shadow-card backdrop-blur transition-colors hover:text-zinc-900 active:scale-95"
+          aria-label="Editar veículo"
+          title="Editar veículo"
+        >
+          <Pencil className="size-4" strokeWidth={2} />
+        </button>
+      ) : null}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={imageSrc}
@@ -1453,6 +1491,7 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
   const [actionPanel, setActionPanel] = useState<"menu" | "budget" | "status" | "info" | "execution" | "photos" | "finish" | "delete">("menu");
   const [paymentSheetOpen, setPaymentSheetOpen] = useState(false);
   const [documentSheetOpen, setDocumentSheetOpen] = useState(false);
+  const [vehicleEditOpen, setVehicleEditOpen] = useState(false);
   const [executionDraft, setExecutionDraft] = useState({
     diagnosis: order.diagnosis ?? "",
     mechanicRecommendations: order.mechanicRecommendations ?? "",
@@ -1562,16 +1601,34 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
           <div>
             <p className="text-sm font-bold text-zinc-500">{customer?.name}</p>
             <h2 className="mt-1 text-2xl font-semibold tracking-tight">{order.number}</h2>
-            <p className="mt-1 text-sm text-zinc-500">
-              {vehicle?.brand} {vehicle?.model} - {formatPlate(vehicle?.plate ?? "")}
-            </p>
+            <div className="mt-1 flex min-w-0 items-center gap-1">
+              <p className="truncate text-sm text-zinc-500">
+                {vehicle?.brand} {vehicle?.model} - {formatPlate(vehicle?.plate ?? "")}
+              </p>
+              {vehicle ? (
+                <button
+                  type="button"
+                  onPointerDown={() => haptic("tap")}
+                  onClick={() => setVehicleEditOpen(true)}
+                  className="grid size-7 shrink-0 place-items-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 active:scale-95"
+                  aria-label="Editar veículo"
+                  title="Editar veículo"
+                >
+                  <Pencil className="size-3.5" strokeWidth={2} />
+                </button>
+              ) : null}
+            </div>
           </div>
           <div className="flex flex-col items-end gap-1">
             <Badge variant={badgeForOrder(order.status)}>{ORDER_STATUS_LABEL[order.status]}</Badge>
             <Badge variant={badgeForPayment(order.paymentStatus)}>{PAYMENT_STATUS_LABEL[order.paymentStatus]}</Badge>
           </div>
         </div>
-        {vehicle ? <div className="mt-4"><VehicleVisual vehicle={vehicle} /></div> : null}
+        {vehicle ? (
+          <div className="mt-4">
+            <VehicleVisual vehicle={vehicle} onEdit={() => setVehicleEditOpen(true)} />
+          </div>
+        ) : null}
         <div className="mt-4 grid grid-cols-3 gap-2">
           <MiniStat label="Peças" value={formatCurrency(totals.subtotalParts)} />
           <MiniStat label="M.O." value={formatCurrency(totals.subtotalLabor)} />
@@ -1990,6 +2047,14 @@ function OrderDetail({ order, onBack, onOpenCustomer }: { order: ServiceOrder; o
 
       <PaymentSheet open={paymentSheetOpen} onOpenChange={setPaymentSheetOpen} orderId={order.id} />
       <DocumentSheet open={documentSheetOpen} onOpenChange={setDocumentSheetOpen} orderId={order.id} />
+      {vehicle && customer ? (
+        <VehicleEditSheet
+          vehicle={vehicle}
+          customerId={customer.id}
+          open={vehicleEditOpen}
+          onOpenChange={setVehicleEditOpen}
+        />
+      ) : null}
     </div>
   );
 }
@@ -2529,6 +2594,148 @@ function CustomerEditSheet({
                 />
               </Field>
             </div>
+            {feedback ? <p className="text-sm font-semibold text-rose-600">{feedback}</p> : null}
+            <Button type="submit" className="w-full">
+              Salvar alterações
+            </Button>
+          </form>
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function VehicleEditSheet({
+  vehicle,
+  customerId,
+  open,
+  onOpenChange,
+}: {
+  vehicle: Vehicle;
+  customerId: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { createOrUpdateVehicle } = useWorkshop();
+  const [plateEditable, setPlateEditable] = useState(false);
+  const [draft, setDraft] = useState({
+    plate: vehicle.plate,
+    category: vehicle.category,
+    brand: vehicle.brand,
+    model: vehicle.model,
+    version: vehicle.version ?? "",
+    year: vehicle.year ? String(vehicle.year) : "",
+    color: vehicle.color ?? "",
+  });
+  const [feedback, setFeedback] = useState("");
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!open) return;
+    setPlateEditable(false);
+    setDraft({
+      plate: vehicle.plate,
+      category: vehicle.category,
+      brand: vehicle.brand,
+      model: vehicle.model,
+      version: vehicle.version ?? "",
+      year: vehicle.year ? String(vehicle.year) : "",
+      color: vehicle.color ?? "",
+    });
+    setFeedback("");
+    setErrors({});
+  }, [open, vehicle]);
+
+  function patchDraft(patch: Partial<typeof draft>) {
+    setDraft((current) => ({ ...current, ...patch }));
+  }
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    try {
+      const category = draft.category;
+      createOrUpdateVehicle(
+        customerId,
+        {
+          vehicleId: vehicle.id,
+          plate: draft.plate,
+          brand: draft.brand,
+          model: draft.model,
+          version: draft.version,
+          year: draft.year ? Number(draft.year) : undefined,
+          color: draft.color,
+          category,
+        },
+        {
+          status: "found",
+          brand: draft.brand,
+          model: draft.model,
+          version: draft.version || undefined,
+          year: draft.year ? Number(draft.year) : undefined,
+          color: draft.color || undefined,
+          category,
+          provider: vehicle.lookupProvider ?? "Cadastro manual",
+          imageUrl: localImageForCategory(category),
+        },
+      );
+      setErrors({});
+      onOpenChange(false);
+      toast.success("Veículo atualizado.");
+    } catch (error) {
+      setErrors(fieldErrors(error));
+      setFeedback(errorMessage(error));
+    }
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent>
+        <SheetHeader>
+          <SheetTitle>Editar veículo</SheetTitle>
+          <SheetDescription>Altere os dados do veículo. Toque no lápis da placa para liberar a edição.</SheetDescription>
+        </SheetHeader>
+        <div className="sheet-scroll-area px-5">
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <Field label="Placa" error={errors.plate}>
+              <div className="relative">
+                <Input
+                  value={formatPlate(draft.plate)}
+                  onChange={(event) => {
+                    setErrors((current) => ({ ...current, plate: "" }));
+                    patchDraft({ plate: normalizePlate(event.target.value) });
+                  }}
+                  placeholder="ABC-1D23"
+                  disabled={!plateEditable}
+                  className={`pr-11 ${plateEditable ? "" : "bg-zinc-50 text-zinc-500"} ${invalidFieldClass(errors.plate)}`}
+                />
+                <button
+                  type="button"
+                  onPointerDown={() => haptic("tap")}
+                  onClick={() => setPlateEditable((current) => !current)}
+                  className={`absolute right-1 top-1/2 grid size-9 -translate-y-1/2 place-items-center rounded-lg transition-colors ${
+                    plateEditable ? "text-zinc-950" : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                  }`}
+                  aria-label={plateEditable ? "Bloquear placa" : "Editar placa"}
+                  title={plateEditable ? "Bloquear placa" : "Editar placa"}
+                >
+                  <Pencil className="size-4" strokeWidth={2} />
+                </button>
+              </div>
+            </Field>
+
+            <VehicleIdentityFields
+              values={{
+                category: draft.category,
+                brand: draft.brand,
+                model: draft.model,
+                version: draft.version,
+                year: draft.year,
+                color: draft.color,
+              }}
+              onChange={patchDraft}
+              errors={errors}
+            />
+
             {feedback ? <p className="text-sm font-semibold text-rose-600">{feedback}</p> : null}
             <Button type="submit" className="w-full">
               Salvar alterações

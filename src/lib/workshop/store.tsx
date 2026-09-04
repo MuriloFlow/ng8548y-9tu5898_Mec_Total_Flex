@@ -107,6 +107,7 @@ type StoreContextValue = {
   createOrUpdateVehicle: (
     customerId: string,
     input: {
+      vehicleId?: string;
       plate: string;
       brand: string;
       model: string;
@@ -775,12 +776,54 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
         const customer = draft.customers.find((item) => item.id === customerId && !item.deletedAt);
         if (!customer) throw new Error("Cliente não encontrado.");
 
+        const now = new Date().toISOString();
+
+        if (input.vehicleId) {
+          const target = draft.vehicles.find(
+            (item) => item.id === input.vehicleId && item.customerId === customerId && !item.deletedAt,
+          );
+          if (!target) throw new Error("Veículo não encontrado.");
+
+          const plateTaken = draft.vehicles.some(
+            (item) => item.id !== target.id && !item.deletedAt && item.plate === parsed.plate,
+          );
+          if (plateTaken) throw new Error("Essa placa já está vinculada a outro veículo.");
+
+          const before = cloneState(draft).vehicles.find((vehicle) => vehicle.id === target.id);
+          Object.assign(target, {
+            plate: parsed.plate,
+            brand: parsed.brand,
+            model: parsed.model,
+            version: parsed.version,
+            year: parsed.year,
+            color: parsed.color,
+            category: parsed.category,
+            lookupStatus: lookup?.status === "found" ? "found" : target.lookupStatus,
+            lookupProvider: lookup?.status === "found" ? lookup.provider : target.lookupProvider,
+            imageUrl: localImageForCategory(parsed.category),
+            updatedAt: now,
+          });
+          pushAudit(draft, userId, "vehicle", target.id, "updated", `Veículo ${target.plate} atualizado.`, before, target);
+          upsertPlateMemory(draft, {
+            plate: target.plate,
+            brand: target.brand,
+            model: target.model,
+            version: target.version,
+            year: target.year,
+            color: target.color,
+            category: target.category,
+            lookupStatus: target.lookupStatus,
+            lookupProvider: target.lookupProvider,
+            imageUrl: target.imageUrl,
+          });
+          return { vehicle: target, created: false };
+        }
+
         const duplicate = findVehicleByPlate(draft, parsed.plate);
         if (duplicate && duplicate.customerId !== customerId) {
           throw new Error("Essa placa já está vinculada a outro cliente.");
         }
 
-        const now = new Date().toISOString();
         if (duplicate) {
           const before = cloneState(draft).vehicles.find((vehicle) => vehicle.id === duplicate.id);
           Object.assign(duplicate, {

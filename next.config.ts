@@ -6,7 +6,7 @@ const nextConfig: NextConfig = {
     serverActions: {
       bodySizeLimit: "25mb",
     },
-    middlewareClientMaxBodySize: 25 * 1024 * 1024,
+    proxyClientMaxBodySize: "25mb",
   },
   serverExternalPackages: ["@supabase/supabase-js"],
 };
