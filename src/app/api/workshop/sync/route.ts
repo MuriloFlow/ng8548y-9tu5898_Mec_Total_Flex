@@ -5,6 +5,7 @@ import { syncEntitiesToTables } from "@/lib/workshop/entity-sync";
 import { applyWorkshopSchemaPatches } from "@/lib/workshop/schema-patches";
 import { createSeedState } from "@/lib/workshop/seed";
 import { decryptWorkshopStateFromStorage, encryptWorkshopStateForStorage } from "@/lib/workshop/state-crypto";
+import { normalizeWorkshopState } from "@/lib/workshop/normalize-state";
 import type { WorkshopState } from "@/lib/workshop/types";
 
 export const dynamic = "force-dynamic";
@@ -175,7 +176,7 @@ export async function GET() {
 
     return NextResponse.json({
       ok: true,
-      state: decryptWorkshopStateFromStorage(result.row.state),
+      state: normalizeWorkshopState(decryptWorkshopStateFromStorage(result.row.state)),
       updatedAt: result.row.updated_at ?? result.row.state.updatedAt,
       source: "supabase",
     });

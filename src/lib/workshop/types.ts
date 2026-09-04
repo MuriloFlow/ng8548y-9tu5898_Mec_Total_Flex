@@ -91,6 +91,22 @@ export type Vehicle = {
   deletedAt?: string;
 };
 
+/** Memória anônima de placa — sobrevive à exclusão do cliente para reconhecimento futuro. */
+export type PlateMemory = {
+  id: string;
+  plate: string;
+  brand: string;
+  model: string;
+  version?: string;
+  year?: number;
+  color?: string;
+  category: Vehicle["category"];
+  lookupStatus?: VehicleLookupStatus;
+  lookupProvider?: string;
+  imageUrl?: string;
+  updatedAt: string;
+};
+
 export type CatalogService = {
   id: string;
   name: string;
@@ -283,6 +299,7 @@ export type WorkshopState = {
   employees: Employee[];
   customers: Customer[];
   vehicles: Vehicle[];
+  plateMemories: PlateMemory[];
   mileageRecords: MileageRecord[];
   services: CatalogService[];
   products: CatalogProduct[];

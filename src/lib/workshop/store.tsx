@@ -11,9 +11,10 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { ORDER_STATUS_SEQUENCE } from "./constants";
-import { newId } from "./format";
+import { newId, normalizePlate } from "./format";
 import { hasPermission, type Permission } from "./permissions";
 import { createSeedState } from "./seed";
+import { normalizeWorkshopState } from "./normalize-state";
 import { localImageForCategory } from "./vehicle-image";
 import {
   calculateItemsTotals,
@@ -36,6 +37,7 @@ import type {
   OrderStatus,
   Payment,
   PaymentMethod,
+  PlateMemory,
   QuoteRevision,
   ServiceOrder,
   Vehicle,
@@ -91,6 +93,7 @@ type StoreContextValue = {
   forceSync: () => Promise<void>;
   createOrUpdateCustomer: (
     input: {
+      customerId?: string;
       cpf: string;
       name: string;
       phone: string;
@@ -334,7 +337,7 @@ async function fetchRemoteStateOnce(): Promise<{ ok: true; state: WorkshopState 
     };
 
     if (response.ok && body.state?.updatedAt && (body.source === "supabase" || body.ok === true)) {
-      return { ok: true, state: body.state };
+      return { ok: true, state: normalizeWorkshopState(body.state) };
     }
 
     const detail = body.detail || body.reason || `HTTP ${response.status}`;
@@ -427,6 +430,38 @@ function pushAudit(
     summary,
   });
   state.auditEvents = state.auditEvents.slice(0, 150);
+}
+
+function upsertPlateMemory(
+  draft: WorkshopState,
+  input: Pick<
+    PlateMemory,
+    "plate" | "brand" | "model" | "version" | "year" | "color" | "category" | "lookupStatus" | "lookupProvider" | "imageUrl"
+  >,
+) {
+  if (!draft.plateMemories) draft.plateMemories = [];
+  const plate = normalizePlate(input.plate);
+  const now = new Date().toISOString();
+  const existing = draft.plateMemories.find((memory) => memory.plate === plate);
+  const payload: PlateMemory = {
+    id: existing?.id ?? newId("plate"),
+    plate,
+    brand: input.brand,
+    model: input.model,
+    version: input.version,
+    year: input.year,
+    color: input.color,
+    category: input.category,
+    lookupStatus: input.lookupStatus,
+    lookupProvider: input.lookupProvider,
+    imageUrl: input.imageUrl,
+    updatedAt: now,
+  };
+  if (existing) {
+    Object.assign(existing, payload);
+    return;
+  }
+  draft.plateMemories.unshift(payload);
 }
 
 function updatePaymentStatus(state: WorkshopState, orderId: string) {
@@ -632,12 +667,23 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
 
       return commit(
         (draft, userId) => {
-          const existing = findCustomerByCpf(draft, parsed.cpf);
+          const existingById = input.customerId
+            ? draft.customers.find((item) => item.id === input.customerId && !item.deletedAt)
+            : undefined;
+          const existing = existingById ?? findCustomerByCpf(draft, parsed.cpf);
           const now = new Date().toISOString();
 
           if (existing) {
+            if (existingById) {
+              const cpfTaken = draft.customers.some(
+                (item) => item.id !== existing.id && !item.deletedAt && item.cpf === parsed.cpf,
+              );
+              if (cpfTaken) throw new Error("Este CPF já pertence a outro cliente.");
+            }
+
             const before = cloneState(draft).customers.find((customer) => customer.id === existing.id);
             Object.assign(existing, {
+              cpf: parsed.cpf,
               name: parsed.name,
               phone: parsed.phone,
               email: parsed.noEmail ? "" : parsed.email,
@@ -687,6 +733,18 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
 
           draft.vehicles.forEach((vehicle) => {
             if (vehicle.customerId === customerId && !vehicle.deletedAt) {
+              upsertPlateMemory(draft, {
+                plate: vehicle.plate,
+                brand: vehicle.brand,
+                model: vehicle.model,
+                version: vehicle.version,
+                year: vehicle.year,
+                color: vehicle.color,
+                category: vehicle.category,
+                lookupStatus: vehicle.lookupStatus,
+                lookupProvider: vehicle.lookupProvider,
+                imageUrl: vehicle.imageUrl,
+              });
               vehicle.deletedAt = now;
               vehicle.updatedAt = now;
             }
@@ -738,6 +796,18 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
             updatedAt: now,
           });
           pushAudit(draft, userId, "vehicle", duplicate.id, "updated", `Veículo ${duplicate.plate} atualizado.`, before, duplicate);
+          upsertPlateMemory(draft, {
+            plate: duplicate.plate,
+            brand: duplicate.brand,
+            model: duplicate.model,
+            version: duplicate.version,
+            year: duplicate.year,
+            color: duplicate.color,
+            category: duplicate.category,
+            lookupStatus: duplicate.lookupStatus,
+            lookupProvider: duplicate.lookupProvider,
+            imageUrl: duplicate.imageUrl,
+          });
           return { vehicle: duplicate, created: false };
         }
 
@@ -759,6 +829,18 @@ export function WorkshopProvider({ children }: { children: ReactNode }) {
         };
         draft.vehicles.unshift(vehicle);
         pushAudit(draft, userId, "vehicle", vehicle.id, "created", `Veículo ${vehicle.plate} criado.`, undefined, vehicle);
+        upsertPlateMemory(draft, {
+          plate: vehicle.plate,
+          brand: vehicle.brand,
+          model: vehicle.model,
+          version: vehicle.version,
+          year: vehicle.year,
+          color: vehicle.color,
+          category: vehicle.category,
+          lookupStatus: vehicle.lookupStatus,
+          lookupProvider: vehicle.lookupProvider,
+          imageUrl: vehicle.imageUrl,
+        });
         return { vehicle, created: true };
       }, { syncImmediately: true });
     },

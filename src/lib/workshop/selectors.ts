@@ -90,6 +90,11 @@ export function findVehicleByPlate(state: WorkshopState, plate: string) {
   return state.vehicles.find((vehicle) => vehicle.plate === normalized && !vehicle.deletedAt);
 }
 
+export function findPlateMemoryByPlate(state: WorkshopState, plate: string) {
+  const normalized = normalizePlate(plate);
+  return (state.plateMemories ?? []).find((memory) => memory.plate === normalized);
+}
+
 export function nextOrderNumber(state: WorkshopState) {
   const year = new Date().getFullYear();
   const sequence = state.orders.reduce((current, order) => {

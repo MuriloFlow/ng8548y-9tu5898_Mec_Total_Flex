@@ -47,6 +47,20 @@ function mode(): "enforce" | "monitor" | "off" {
 
 const ALLOW: EntitlementResult = { allowed: true, degraded: false, entitlement: null };
 
+let lastEntitlementFailureLogAt = 0;
+const ENTITLEMENT_LOG_COOLDOWN_MS = 60_000;
+
+function logEntitlementFailure(hint: string, isTimeout: boolean) {
+  const now = Date.now();
+  if (now - lastEntitlementFailureLogAt < ENTITLEMENT_LOG_COOLDOWN_MS) return;
+  lastEntitlementFailureLogAt = now;
+
+  // Timeout em dev/local é esperado quando FlowDesk só responde em produção — não floodar stderr.
+  if (isTimeout && process.env.NODE_ENV !== "production") return;
+
+  console.warn("[flowdesk] entitlement indisponível (acesso liberado em degraded):", hint);
+}
+
 function normalizeBlocked(entitlement: Entitlement): boolean {
   return entitlement.blocked === true || entitlement.has_access === false;
 }
@@ -135,12 +149,13 @@ export async function fetchEntitlement(options?: { fresh?: boolean }): Promise<E
     return result;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const hint =
-      message.includes("aborted") || message.includes("AbortError")
-        ? `Timeout ao consultar ${flowdeskBaseUrl()} — confira FLOWDESK_API_URL (FlowDesk local: http://localhost:3000, não :3001).`
-        : message;
+    const isTimeout =
+      message.includes("aborted") || message.includes("AbortError") || message.toLowerCase().includes("timeout");
+    const hint = isTimeout
+      ? `Timeout ao consultar ${flowdeskBaseUrl()} — confira FLOWDESK_API_URL (FlowDesk local: http://localhost:3000, não :3001).`
+      : message;
 
-    console.error("[flowdesk] falha ao consultar entitlement:", hint);
+    logEntitlementFailure(hint, isTimeout);
 
     const result: EntitlementResult = { ...ALLOW, degraded: true, error: hint };
     writeEntitlementCache(result, 5_000);

@@ -41,6 +41,7 @@ export function createSeedState(): WorkshopState {
     ],
     customers: [],
     vehicles: [],
+    plateMemories: [],
     mileageRecords: [],
     services: [],
     products: [],

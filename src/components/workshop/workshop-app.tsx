@@ -37,6 +37,7 @@ import {
   Landmark,
   LogOut,
   Menu,
+  Pencil,
   Plus,
   ReceiptText,
   Search,
@@ -99,6 +100,7 @@ import {
 } from "@/lib/workshop/format";
 import {
   findCustomerByCpf,
+  findPlateMemoryByPlate,
   findVehicleByPlate,
   globalSearch,
   getCustomer,
@@ -728,13 +730,13 @@ function WorkspaceShell() {
               <motion.button
                 type="button"
                 onPointerDown={() => haptic("select")}
-                onClick={() => setCustomerSheetOpen(true)}
+                onClick={openOrderFlow}
                 style={{ x: "-50%", y: "-50%" }}
                 whileTap={{ scale: 0.92 }}
                 transition={springSnappy}
                 className="absolute left-1/2 top-3 z-10 grid size-14 place-items-center rounded-full bg-gradient-to-b from-zinc-800 to-zinc-950 text-white shadow-[0_1px_0_rgba(255,255,255,0.14)_inset,0_10px_28px_-8px_rgba(24,24,27,0.6)] ring-[3px] ring-white"
-                title="Novo cliente"
-                aria-label="Novo cliente"
+                title="Nova ordem de serviço"
+                aria-label="Nova ordem de serviço"
               >
                 <Plus className="size-6" strokeWidth={2.4} />
               </motion.button>
@@ -1128,6 +1130,7 @@ function CustomerProfile({
   onOpenOrder: (orderId: string) => void;
 }) {
   const { state, deleteCustomer } = useWorkshop();
+  const [editOpen, setEditOpen] = useState(false);
   if (!state) return null;
   const vehicles = getVehiclesForCustomer(state, customer.id);
   const orders = getOrdersForCustomer(state, customer.id);
@@ -1154,9 +1157,21 @@ function CustomerProfile({
       <motion.section variants={staggerItem} className="rounded-2xl bg-white p-5 shadow-card">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <h2 className="text-[22px] font-semibold leading-tight tracking-[-0.025em] text-zinc-950">
-              {customer.name}
-            </h2>
+            <div className="flex min-w-0 items-center gap-1">
+              <h2 className="truncate text-[22px] font-semibold leading-tight tracking-[-0.025em] text-zinc-950">
+                {customer.name}
+              </h2>
+              <button
+                type="button"
+                onPointerDown={() => haptic("tap")}
+                onClick={() => setEditOpen(true)}
+                className="grid size-8 shrink-0 place-items-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 active:scale-95"
+                aria-label="Editar cliente"
+                title="Editar cliente"
+              >
+                <Pencil className="size-4" strokeWidth={2} />
+              </button>
+            </div>
             <p className="tabular mt-1 text-[13px] text-zinc-500">
               {formatCpf(customer.cpf)} · {formatPhone(customer.phone)}
             </p>
@@ -1200,6 +1215,8 @@ function CustomerProfile({
           ))}
         </motion.section>
       ) : null}
+
+      <CustomerEditSheet customer={customer} open={editOpen} onOpenChange={setEditOpen} />
     </motion.div>
   );
 }
@@ -2362,10 +2379,178 @@ function CustomerFlowSheet({
   );
 }
 
+function CustomerEditSheet({
+  customer,
+  open,
+  onOpenChange,
+}: {
+  customer: WorkshopState["customers"][number];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { createOrUpdateCustomer } = useWorkshop();
+  const [cpfEditable, setCpfEditable] = useState(false);
+  const [draft, setDraft] = useState({
+    cpf: customer.cpf,
+    name: customer.name,
+    phone: customer.phone,
+    email: customer.email ?? "",
+    noEmail: customer.noEmail,
+    address: customer.address ?? "",
+    district: customer.district ?? "",
+  });
+  const [feedback, setFeedback] = useState("");
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!open) return;
+    setCpfEditable(false);
+    setDraft({
+      cpf: customer.cpf,
+      name: customer.name,
+      phone: customer.phone,
+      email: customer.email ?? "",
+      noEmail: customer.noEmail,
+      address: customer.address ?? "",
+      district: customer.district ?? "",
+    });
+    setFeedback("");
+    setErrors({});
+  }, [open, customer]);
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    try {
+      createOrUpdateCustomer({
+        customerId: customer.id,
+        cpf: draft.cpf,
+        name: draft.name,
+        phone: draft.phone,
+        email: draft.email,
+        noEmail: draft.noEmail,
+        address: draft.address,
+        district: draft.district,
+      });
+      setErrors({});
+      onOpenChange(false);
+      toast.success("Cliente atualizado.");
+    } catch (error) {
+      setErrors(fieldErrors(error));
+      setFeedback(errorMessage(error));
+    }
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent>
+        <SheetHeader>
+          <SheetTitle>Editar cliente</SheetTitle>
+          <SheetDescription>Altere os dados de cadastro. Toque no lápis do CPF para liberar a edição.</SheetDescription>
+        </SheetHeader>
+        <div className="sheet-scroll-area px-5">
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <Field label="CPF" error={errors.cpf}>
+              <div className="relative">
+                <Input
+                  value={formatCpf(draft.cpf)}
+                  onChange={(event) => {
+                    setErrors((current) => ({ ...current, cpf: "" }));
+                    setDraft((current) => ({ ...current, cpf: normalizeCpf(event.target.value) }));
+                  }}
+                  inputMode="numeric"
+                  disabled={!cpfEditable}
+                  className={`pr-11 ${cpfEditable ? "" : "bg-zinc-50 text-zinc-500"} ${invalidFieldClass(errors.cpf)}`}
+                />
+                <button
+                  type="button"
+                  onPointerDown={() => haptic("tap")}
+                  onClick={() => setCpfEditable((current) => !current)}
+                  className={`absolute right-1 top-1/2 grid size-9 -translate-y-1/2 place-items-center rounded-lg transition-colors ${
+                    cpfEditable ? "text-zinc-950" : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                  }`}
+                  aria-label={cpfEditable ? "Bloquear CPF" : "Editar CPF"}
+                  title={cpfEditable ? "Bloquear CPF" : "Editar CPF"}
+                >
+                  <Pencil className="size-4" strokeWidth={2} />
+                </button>
+              </div>
+            </Field>
+            <Field label="Nome completo" error={errors.name}>
+              <Input
+                value={draft.name}
+                onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
+                autoFocus
+                className={invalidFieldClass(errors.name)}
+              />
+            </Field>
+            <Field label="Telefone" error={errors.phone}>
+              <Input
+                value={formatPhone(draft.phone)}
+                onChange={(event) => setDraft((current) => ({ ...current, phone: normalizePhone(event.target.value) }))}
+                inputMode="tel"
+                className={invalidFieldClass(errors.phone)}
+              />
+            </Field>
+            <Field label="E-mail" error={errors.email}>
+              <Input
+                value={draft.email}
+                onChange={(event) => setDraft((current) => ({ ...current, email: event.target.value }))}
+                type="email"
+                disabled={draft.noEmail}
+                className={invalidFieldClass(errors.email)}
+              />
+            </Field>
+            <label className="flex items-center gap-3 rounded-xl bg-zinc-50 p-3 text-sm font-semibold text-zinc-700">
+              <input
+                type="checkbox"
+                checked={draft.noEmail}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    noEmail: event.target.checked,
+                    email: event.target.checked ? "" : current.email,
+                  }))
+                }
+                className="size-5 accent-zinc-950"
+              />
+              Cliente não possui e-mail
+            </label>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Endereço">
+                <Input
+                  value={draft.address}
+                  onChange={(event) => setDraft((current) => ({ ...current, address: event.target.value }))}
+                />
+              </Field>
+              <Field label="Bairro">
+                <Input
+                  value={draft.district}
+                  onChange={(event) => setDraft((current) => ({ ...current, district: event.target.value }))}
+                />
+              </Field>
+            </div>
+            {feedback ? <p className="text-sm font-semibold text-rose-600">{feedback}</p> : null}
+            <Button type="submit" className="w-full">
+              Salvar alterações
+            </Button>
+          </form>
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 function createOrderFlowDraft(customerId?: string) {
   return {
-    step: "plate",
+    step: customerId ? "plate" : "cpf",
     customerId: customerId ?? "",
+    cpf: "",
+    name: "",
+    phone: "",
+    email: "",
+    noEmail: false,
+    address: "",
+    district: "",
     plate: "",
     vehicleId: "",
     brand: "",
@@ -2373,7 +2558,7 @@ function createOrderFlowDraft(customerId?: string) {
     version: "",
     year: "",
     color: "",
-    category: "car",
+    category: "car" as Vehicle["category"],
     currentMileage: "",
     fuelLevel: "",
     entryState: "",
@@ -2399,19 +2584,73 @@ function OrderFlowSheet({
   customerId?: string;
   onOrderCreated: (orderId: string) => void;
 }) {
-  const { state, createOrUpdateVehicle, createOrder } = useWorkshop();
+  const { state, createOrUpdateCustomer, createOrUpdateVehicle, createOrder } = useWorkshop();
   const [knownVehicle, setKnownVehicle] = useState(false);
   const [draft, setDraft] = useState<OrderFlowDraft>(() => createOrderFlowDraft(customerId));
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [feedback, setFeedback] = useState("");
 
   const patchDraft = useCallback((patch: Partial<OrderFlowDraft>) => {
     setDraft((current) => ({ ...current, ...patch }));
   }, []);
 
+  useEffect(() => {
+    if (!open) return;
+    setDraft(createOrderFlowDraft(customerId));
+    setErrors({});
+    setFeedback("");
+    setKnownVehicle(false);
+  }, [open, customerId]);
+
   if (!state) return null;
   const currentState = state;
-  const customer = currentState.customers.find((item) => item.id === String(draft.customerId));
+  const customer = currentState.customers.find(
+    (item) => item.id === String(draft.customerId) && !item.deletedAt,
+  );
   const selectedVehicle = currentState.vehicles.find((item) => item.id === String(draft.vehicleId));
+
+  function handleCpf(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const cpf = normalizeCpf(String(draft.cpf));
+    if (!isValidCpf(cpf)) {
+      setErrors({ cpf: "CPF inválido." });
+      setFeedback("CPF inválido.");
+      return;
+    }
+    const existing = findCustomerByCpf(currentState, cpf);
+    if (existing) {
+      setErrors({});
+      setFeedback("");
+      patchDraft({ customerId: existing.id, cpf, step: "plate" });
+      toast.success("Cliente localizado.");
+      return;
+    }
+    setFeedback("");
+    setErrors({});
+    patchDraft({ cpf, step: "profile" });
+  }
+
+  function handleProfile(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    try {
+      const result = createOrUpdateCustomer({
+        cpf: String(draft.cpf),
+        name: String(draft.name),
+        phone: String(draft.phone),
+        email: String(draft.email),
+        noEmail: Boolean(draft.noEmail),
+        address: String(draft.address),
+        district: String(draft.district),
+      });
+      setErrors({});
+      setFeedback("");
+      patchDraft({ customerId: result.customer.id, step: "plate" });
+      toast.success(result.created ? "Cliente cadastrado." : "Cliente atualizado.");
+    } catch (error) {
+      setErrors(fieldErrors(error));
+      setFeedback(errorMessage(error));
+    }
+  }
 
   function handlePlate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -2442,6 +2681,54 @@ function OrderFlowSheet({
       toast.success(`${existing.brand} ${existing.model} reconhecido pela placa.`);
       return;
     }
+
+    const memory = findPlateMemoryByPlate(currentState, plate);
+    if (memory) {
+      try {
+        const lookupForSave: VehicleLookupResult = {
+          status: "found",
+          brand: memory.brand,
+          model: memory.model,
+          version: memory.version,
+          year: memory.year,
+          color: memory.color,
+          category: memory.category,
+          provider: memory.lookupProvider ?? "Memória de placa",
+          imageUrl: memory.imageUrl ?? localImageForCategory(memory.category),
+        };
+        const result = createOrUpdateVehicle(
+          String(draft.customerId),
+          {
+            plate,
+            brand: memory.brand,
+            model: memory.model,
+            version: memory.version ?? "",
+            year: memory.year,
+            color: memory.color ?? "",
+            category: memory.category,
+          },
+          lookupForSave,
+        );
+        setKnownVehicle(true);
+        patchDraft({
+          plate,
+          vehicleId: result.vehicle.id,
+          brand: memory.brand,
+          model: memory.model,
+          version: memory.version ?? "",
+          year: memory.year ? String(memory.year) : "",
+          color: memory.color ?? "",
+          category: memory.category,
+          step: "order",
+        });
+        toast.success(`${memory.brand} ${memory.model} reconhecido pela placa.`);
+        return;
+      } catch (error) {
+        toast.error(errorMessage(error));
+        return;
+      }
+    }
+
     setKnownVehicle(false);
     patchDraft({ plate, step: "vehicle" });
   }
@@ -2520,19 +2807,80 @@ function OrderFlowSheet({
           <SheetDescription>Cliente, placa, veículo e entrada em etapas curtas.</SheetDescription>
         </SheetHeader>
         <div className="sheet-scroll-area px-5">
-          {!customer ? (
-            <div className="space-y-3">
-              <Field label="Cliente">
-                <select className={selectClass} value={String(draft.customerId)} onChange={(event) => patchDraft({ customerId: event.target.value })}>
-                  <option value="">Selecione</option>
-                  {currentState.customers.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                    </option>
-                  ))}
-                </select>
+          {!customer && draft.step === "cpf" ? (
+            <form onSubmit={handleCpf} className="space-y-4">
+              <Field label="CPF" error={errors.cpf}>
+                <Input
+                  value={formatCpf(String(draft.cpf))}
+                  onChange={(event) => {
+                    setErrors((current) => ({ ...current, cpf: "" }));
+                    patchDraft({ cpf: normalizeCpf(event.target.value) });
+                  }}
+                  inputMode="numeric"
+                  autoFocus
+                  placeholder="000.000.000-00"
+                  className={invalidFieldClass(errors.cpf)}
+                />
               </Field>
-            </div>
+              {feedback ? <p className="text-sm font-semibold text-rose-600">{feedback}</p> : null}
+              <Button type="submit" className="w-full">
+                Continuar
+              </Button>
+            </form>
+          ) : null}
+
+          {!customer && draft.step === "profile" ? (
+            <form onSubmit={handleProfile} className="space-y-4">
+              <BackLink label="CPF" onClick={() => patchDraft({ step: "cpf" })} />
+              <Field label="Nome completo" error={errors.name}>
+                <Input
+                  value={String(draft.name)}
+                  onChange={(event) => patchDraft({ name: event.target.value })}
+                  autoFocus
+                  className={invalidFieldClass(errors.name)}
+                />
+              </Field>
+              <Field label="Telefone" error={errors.phone}>
+                <Input
+                  value={formatPhone(String(draft.phone))}
+                  onChange={(event) => patchDraft({ phone: normalizePhone(event.target.value) })}
+                  inputMode="tel"
+                  className={invalidFieldClass(errors.phone)}
+                />
+              </Field>
+              <Field label="E-mail" error={errors.email}>
+                <Input
+                  value={String(draft.email)}
+                  onChange={(event) => patchDraft({ email: event.target.value })}
+                  type="email"
+                  disabled={Boolean(draft.noEmail)}
+                  className={invalidFieldClass(errors.email)}
+                />
+              </Field>
+              <label className="flex items-center gap-3 rounded-xl bg-zinc-50 p-3 text-sm font-semibold text-zinc-700">
+                <input
+                  type="checkbox"
+                  checked={Boolean(draft.noEmail)}
+                  onChange={(event) =>
+                    patchDraft({ noEmail: event.target.checked, email: event.target.checked ? "" : String(draft.email) })
+                  }
+                  className="size-5 accent-zinc-950"
+                />
+                Cliente não possui e-mail
+              </label>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Endereço">
+                  <Input value={String(draft.address)} onChange={(event) => patchDraft({ address: event.target.value })} />
+                </Field>
+                <Field label="Bairro">
+                  <Input value={String(draft.district)} onChange={(event) => patchDraft({ district: event.target.value })} />
+                </Field>
+              </div>
+              {feedback ? <p className="text-sm font-semibold text-rose-600">{feedback}</p> : null}
+              <Button type="submit" className="w-full">
+                Continuar para placa
+              </Button>
+            </form>
           ) : null}
 
           {customer && draft.step === "plate" ? (

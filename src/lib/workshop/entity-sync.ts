@@ -145,6 +145,39 @@ export async function syncEntitiesToTables(supabase: SupabaseClient, state: Work
     );
     synced.push("vehicles");
 
+    const plateMemories = state.plateMemories ?? [];
+    if (plateMemories.length) {
+      try {
+        await upsertRows(
+          supabase,
+          "plate_memories",
+          plateMemories.map((memory) => ({
+            id: memory.id,
+            company_id: cid,
+            plate: memory.plate,
+            brand: memory.brand,
+            model: memory.model,
+            version: memory.version ?? null,
+            year: memory.year ?? null,
+            color: memory.color ?? null,
+            category: memory.category,
+            lookup_status: memory.lookupStatus ?? null,
+            lookup_provider: memory.lookupProvider ?? null,
+            image_url: memory.imageUrl ?? null,
+            updated_at: memory.updatedAt,
+          })),
+        );
+        synced.push("plate_memories");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes("plate_memories")) {
+          warnings.push("Execute SQL_COMPLETO.sql (plate_memories) no Supabase SQL Editor.");
+        } else {
+          throw error;
+        }
+      }
+    }
+
     await upsertRows(
       supabase,
       "mileage_records",

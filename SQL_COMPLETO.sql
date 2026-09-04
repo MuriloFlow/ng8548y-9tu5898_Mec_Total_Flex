@@ -171,6 +171,27 @@ create index if not exists vehicles_customer_idx on public.vehicles(customer_id)
 create index if not exists vehicles_model_trgm_idx
   on public.vehicles using gin ((brand || ' ' || model || ' ' || coalesce(version, '')) gin_trgm_ops);
 
+-- Memória anônima de placas (sobrevive à exclusão do cliente).
+create table if not exists public.plate_memories (
+  id text primary key,
+  company_id text not null references public.company(id) on delete cascade,
+  plate text not null,
+  brand text not null,
+  model text not null,
+  version text,
+  year integer,
+  color text,
+  category text not null default 'car',
+  lookup_status text,
+  lookup_provider text,
+  image_url text,
+  updated_at timestamptz not null default now(),
+  constraint plate_memories_year_valid check (year is null or year between 1950 and extract(year from now())::int + 1)
+);
+
+create unique index if not exists plate_memories_company_plate_unique
+  on public.plate_memories(company_id, plate);
+
 create table if not exists public.mileage_records (
   id text primary key,
   company_id text references public.company(id) on delete restrict,
@@ -709,6 +730,25 @@ begin
   create unique index if not exists customers_company_cpf_hash_active_unique
     on public.customers(company_id, cpf_hash)
     where deleted_at is null and cpf_hash is not null;
+
+  create table if not exists public.plate_memories (
+    id text primary key,
+    company_id text not null references public.company(id) on delete cascade,
+    plate text not null,
+    brand text not null,
+    model text not null,
+    version text,
+    year integer,
+    color text,
+    category text not null default 'car',
+    lookup_status text,
+    lookup_provider text,
+    image_url text,
+    updated_at timestamptz not null default now()
+  );
+  create unique index if not exists plate_memories_company_plate_unique
+    on public.plate_memories(company_id, plate);
+
   return jsonb_build_object('ok', true);
 exception when others then
   return jsonb_build_object('ok', false, 'error', SQLERRM);
